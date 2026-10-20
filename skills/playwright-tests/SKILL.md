@@ -135,7 +135,7 @@ Test IDs are acceptable when they disambiguate duplicated UI that is already sem
 
 ### Portable Storefront Test IDs
 
-The portable storefront suite in `packages/storefront-e2e` runs against storefronts it does not own, so it finds three product elements and nine cart elements (12 IDs in total) with `getByTestId` first:
+The portable storefront suite in `packages/storefront-e2e` runs against storefronts it does not own, so it finds three product elements and ten cart elements (13 IDs in total) with `getByTestId` first:
 
 - `product-title` on the product detail `<h1>` (exactly one on the page)
 - `product-option-value` on each option value `<a>` or `<button>` (the ID repeats; narrow it by accessible name or `href`)
@@ -147,10 +147,11 @@ The portable storefront suite in `packages/storefront-e2e` runs against storefro
 - `cart-line-quantity` on the line's quantity `<input>`, and `cart-line-increase` and `cart-line-decrease` on its step `<button>`s (exactly one each inside the selected `cart-line`; read the native input value)
 - `cart-line-remove` on the line's remove `<button>` (exactly one inside the selected `cart-line`)
 - `cart-status` on the existing `role="status"` cart totals region (it can repeat; wait for at least one with `role="status"` and the expected English text)
+- `cart-checkout` on the visible native `<a href>` checkout link of each populated cart view, which keeps its link role and a non-empty accessible name in any language (it can repeat in the page and the drawer; scope it to `cart-page` and expect exactly one there)
 
 Read state from native attributes, ARIA, and content: `href`, `aria-current`, `aria-pressed`, native `disabled` or `aria-disabled`, and the title text. Do not add new test-only attributes for state or identity. The target markup must stay accessible.
 
-This exception covers only these 12 IDs in the portable suite. The checkout group reuses `cart-drawer`, `cart-page`, and `cart-line` for its cart setup. The checkout link and the other test groups stay role-first. The cart status text is still English; a language-independent signal is deferred. All other portable-suite locators, and all other suites, stay role-first. `packages/storefront-e2e/docs/storefront-contract.md` is the source of truth. Add a new portable test ID only together with that document. Other test IDs in the target app are allowed, but the portable suite does not read them.
+This exception covers only these 13 IDs in the portable suite. The checkout group uses `cart-drawer`, `cart-page`, `cart-line`, and `cart-checkout`. The other test groups stay role-first. The cart status text is still English; a language-independent signal is deferred. All other portable-suite locators, and all other suites, stay role-first. `packages/storefront-e2e/docs/storefront-contract.md` is the source of truth. Add a new portable test ID only together with that document. Other test IDs in the target app are allowed, but the portable suite does not read them.
 
 ### Accessibility Improvements During Test Writing
 

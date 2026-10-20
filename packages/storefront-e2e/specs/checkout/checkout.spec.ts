@@ -12,7 +12,8 @@ import { test, type CheckoutTestProduct } from "./config";
 
 const CART_SETTLE_TIMEOUT_MS = 15_000;
 const CART_TARGET_OPTIONS: CartTargetOptions = { timeout: CART_SETTLE_TIMEOUT_MS };
-const CHECKOUT_CONTROL_NAME = /check\s*out|checkout|continue to checkout/i;
+// The cart page checkout link from docs/storefront-contract.md#checkout-handoff.
+const CART_CHECKOUT_TEST_ID = "cart-checkout";
 
 type CartExpectation = {
   readonly cartPath: string;
@@ -121,6 +122,136 @@ test.describe("checkout cart setup helpers", () => {
   });
 });
 
+test.describe("checkout link helpers", () => {
+  const expectation: CartExpectation = {
+    cartPath: "/cart",
+    productTitle: "Shirt",
+    variantLabel: "Small",
+  };
+  const options: CartLineOptions = { timeout: 200, variantTimeout: 200 };
+  const cartLine = `<ul><li data-testid="cart-line">Shirt Small</li></ul>`;
+  const checkoutHref = "https://shop.example/checkouts/cn/abc";
+
+  test("clicks only the cart page checkout link and ignores the drawer link and decoys", async ({
+    page,
+  }) => {
+    // The decoys and the closed drawer come first. The real link has a localized name.
+    await openCartFixture(
+      page,
+      `<a href="https://decoy.example/checkout">Checkout</a>
+      <dialog data-testid="cart-drawer">
+        ${cartLine}
+        <a data-testid="cart-checkout" href="https://decoy.example/checkouts/drawer">Checkout</a>
+      </dialog>
+      <main data-testid="cart-page">
+        ${cartLine}
+        <a href="https://decoy.example/checkouts/english">Checkout</a>
+        <a data-testid="cart-checkout" href="${checkoutHref}">Zur Kasse</a>
+      </main>`,
+    );
+
+    await startCheckoutFromPopulatedCart(page, expectation, options);
+
+    await expect(page).toHaveURL(checkoutHref);
+  });
+
+  test("hands off to a relative checkout URL on the storefront", async ({ page }) => {
+    await openCartFixture(
+      page,
+      `<main data-testid="cart-page">
+        ${cartLine}
+        <a data-testid="cart-checkout" href="/cart/c/abc?key=1">Checkout</a>
+      </main>`,
+    );
+
+    await startCheckoutFromPopulatedCart(page, expectation, options);
+
+    await expect(page).toHaveURL(`${STOREFRONT_ORIGIN}/cart/c/abc?key=1`);
+  });
+
+  test("fails clearly for a missing, duplicate, or non-anchor checkout target", async ({
+    page,
+  }) => {
+    const checkout = `<a data-testid="cart-checkout" href="${checkoutHref}">Checkout</a>`;
+    const cases: [string, RegExp][] = [
+      [
+        `<a href="${checkoutHref}">Checkout</a>`,
+        /cart page renders exactly one element with data-testid="cart-checkout" \(the checkout link\)\. Found 0\./,
+      ],
+      [`${checkout}${checkout}`, /data-testid="cart-checkout".*Found 2\./],
+      [
+        `<div data-testid="cart-checkout"><a href="${checkoutHref}">Checkout</a></div>`,
+        /native <a> checkout link\. Found <div>\./,
+      ],
+      [
+        `<button type="button" data-testid="cart-checkout">Checkout</button>`,
+        /native <a> checkout link\. Found <button>\./,
+      ],
+    ];
+
+    for (const [html, message] of cases) {
+      await test.step(html, async () => {
+        // The drawer has a real checkout link. It must not count for the cart page.
+        await openCartFixture(
+          page,
+          `<dialog data-testid="cart-drawer">${checkout}</dialog>
+          <main data-testid="cart-page">${cartLine}${html}</main>`,
+        );
+        await expectContractError(
+          startCheckoutFromPopulatedCart(page, expectation, options),
+          message,
+        );
+        await expect(page).toHaveURL(`${STOREFRONT_ORIGIN}/cart`);
+      });
+    }
+  });
+
+  test("fails clearly when the checkout link is hidden, has another role, or has no name", async ({
+    page,
+  }) => {
+    // role="presentation" is not a case: ARIA ignores it on a focusable <a href>,
+    // so the element is still a link, as it was for the previous role lookup.
+    const sized = `style="display:inline-block;width:80px;height:24px"`;
+    const links = [
+      `<a data-testid="cart-checkout" href="${checkoutHref}" aria-hidden="true">Checkout</a>`,
+      `<a data-testid="cart-checkout" href="${checkoutHref}" role="button">Checkout</a>`,
+      `<a data-testid="cart-checkout" href="${checkoutHref}" hidden>Checkout</a>`,
+      `<a data-testid="cart-checkout" href="${checkoutHref}" ${sized}></a>`,
+    ];
+
+    for (const link of links) {
+      await test.step(link, async () => {
+        await openCartFixture(page, `<main data-testid="cart-page">${cartLine}${link}</main>`);
+        await expectContractError(
+          startCheckoutFromPopulatedCart(page, expectation, options),
+          /data-testid="cart-checkout" is a visible link exposed to assistive technology with a non-empty accessible name\./,
+        );
+        await expect(page).toHaveURL(`${STOREFRONT_ORIGIN}/cart`);
+      });
+    }
+  });
+
+  test("fails clearly for a missing, empty, or invalid checkout href", async ({ page }) => {
+    const links = [
+      `<a data-testid="cart-checkout">Checkout</a>`,
+      `<a data-testid="cart-checkout" href="">Checkout</a>`,
+      `<a data-testid="cart-checkout" href="http://[">Checkout</a>`,
+      `<a data-testid="cart-checkout" href="/collections/all">Checkout</a>`,
+    ];
+
+    for (const link of links) {
+      await test.step(link, async () => {
+        await openCartFixture(page, `<main data-testid="cart-page">${cartLine}${link}</main>`);
+        await expectContractError(
+          startCheckoutFromPopulatedCart(page, expectation, options),
+          /The visible checkout link targets a checkout URL\./,
+        );
+        await expect(page).toHaveURL(`${STOREFRONT_ORIGIN}/cart`);
+      });
+    }
+  });
+});
+
 async function addProductToCart(
   page: Page,
   products: readonly CheckoutTestProduct[],
@@ -174,12 +305,13 @@ async function tryAddProductToCart(
 async function startCheckoutFromPopulatedCart(
   page: Page,
   expectation: CartExpectation,
+  options: CartLineOptions = CART_TARGET_OPTIONS,
 ): Promise<void> {
-  await expectCartLine(page, expectation);
+  await expectCartLine(page, expectation, options);
 
-  const checkout = page.getByRole("link", { name: CHECKOUT_CONTROL_NAME }).first();
-  await expect(checkout).toBeVisible();
+  const checkout = await requireCartPageCheckout(page, expectation.cartPath, options);
   const checkoutUrl = await requireCheckoutUrl(page, checkout, expectation.cartPath);
+  await requireAccessibleCheckoutLink(page, checkout, expectation.cartPath, options);
   const isCheckoutNavigation = (url: URL) => url.href === checkoutUrl.href;
 
   await page.route(isCheckoutNavigation, async (route) => {
@@ -220,6 +352,79 @@ async function expectCartLine(
   }
 
   return line;
+}
+
+/**
+ * Returns the single native <a> checkout link inside the cart page. The drawer
+ * can render its own checkout link with the same test ID; it does not count.
+ */
+async function requireCartPageCheckout(
+  page: Page,
+  cartPath: string,
+  options: CartTargetOptions = CART_TARGET_OPTIONS,
+): Promise<Locator> {
+  const cartPage = await requireCartPage(page, cartPath, options);
+  const checkout = cartPage.getByTestId(CART_CHECKOUT_TEST_ID);
+  const attribute = `data-testid="${CART_CHECKOUT_TEST_ID}"`;
+
+  try {
+    await expect(checkout).toHaveCount(1, { timeout: options.timeout });
+  } catch {
+    const count = await checkout.count();
+    throw createContractError({
+      capability: "checkout-handoff",
+      routePath: cartPath,
+      expectation: `The cart page renders exactly one element with ${attribute} (the checkout link). Found ${count}.`,
+      likelyFix:
+        count === 0
+          ? `Add ${attribute} to the checkout link on the cart page.`
+          : `Keep ${attribute} only on the cart page checkout link. Remove it from other elements in the cart page.`,
+      docsAnchor: "#checkout-handoff",
+    });
+  }
+
+  const element = await checkout.evaluate((node) => node.localName);
+  if (element !== "a") {
+    throw createContractError({
+      capability: "checkout-handoff",
+      routePath: cartPath,
+      expectation: `The element with ${attribute} is the native <a> checkout link. Found <${element}>.`,
+      likelyFix: `Put ${attribute} on the native <a href> checkout link itself, not on a wrapper or a <button>.`,
+      docsAnchor: "#checkout-handoff",
+    });
+  }
+
+  return checkout;
+}
+
+/**
+ * Expects the checkout target to be a visible link for assistive technology,
+ * with an accessible name in any language. Runs after the href check.
+ */
+async function requireAccessibleCheckoutLink(
+  page: Page,
+  checkout: Locator,
+  cartPath: string,
+  { timeout }: CartTargetOptions = CART_TARGET_OPTIONS,
+): Promise<void> {
+  const link = checkout.and(page.getByRole("link"));
+  const isAccessibleLink = await expect(link)
+    .toBeVisible({ timeout })
+    .then(() => expect(link).toHaveAccessibleName(/\S/, { timeout }))
+    .then(
+      () => true,
+      () => false,
+    );
+  if (!isAccessibleLink) {
+    throw createContractError({
+      capability: "checkout-handoff",
+      routePath: cartPath,
+      expectation: `The element with data-testid="${CART_CHECKOUT_TEST_ID}" is a visible link exposed to assistive technology with a non-empty accessible name.`,
+      likelyFix:
+        "Keep the checkout link visible with its native link role. Do not hide it with hidden or aria-hidden, do not override its role, and give it an accessible name in any language.",
+      docsAnchor: "#checkout-handoff",
+    });
+  }
 }
 
 async function cartOverlayLineFor(
@@ -287,4 +492,20 @@ async function rejection(promise: Promise<unknown>): Promise<unknown> {
   } catch (error) {
     return error;
   }
+}
+
+/** Fake storefront origin for checkout link fixtures. No request leaves the browser. */
+const STOREFRONT_ORIGIN = "https://storefront.test";
+
+/**
+ * Serves `body` as the storefront cart page, so relative checkout links have an
+ * HTTP base. Every other request is aborted, except routes the test adds later.
+ */
+async function openCartFixture(page: Page, body: string): Promise<void> {
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+  await page.route("**/*", (route) => route.abort());
+  await page.route(`${STOREFRONT_ORIGIN}/cart`, (route) =>
+    route.fulfill({ body: `<!doctype html>${body}`, contentType: "text/html", status: 200 }),
+  );
+  await page.goto(`${STOREFRONT_ORIGIN}/cart`);
 }

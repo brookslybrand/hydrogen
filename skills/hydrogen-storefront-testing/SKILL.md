@@ -6,18 +6,18 @@ description: >
   Test ID contract for Hydrogen product pages and cart surfaces. Use when
   adding, reviewing, or testing data-testid attributes on the product title,
   variant option values, add to cart button, cart page, cart drawer, cart
-  trigger, cart lines, cart line quantity and remove controls, or cart status,
-  or when writing Playwright tests for product pages, add to cart, and the
-  cart. Framework agnostic.
+  trigger, cart lines, cart line quantity and remove controls, cart status, or
+  checkout link, or when writing Playwright tests for product pages, add to
+  cart, the cart, and the checkout handoff. Framework agnostic.
 ---
 
 # Storefront Test IDs
 
 This is a repository skill for agents who maintain the portable storefront suite in `packages/storefront-e2e/` and the reference storefronts in `templates/react-router/`, `examples/nextjs/`, and `examples/nuxt/`. The canonical contract is `packages/storefront-e2e/docs/storefront-contract.md`. When this skill and the contract differ, the contract is correct. Also read `skills/playwright-tests/SKILL.md` for the Playwright rules of this repository.
 
-Portable storefront tests run against any storefront URL, so they cannot depend on your markup or class names. The product page exposes three standard `data-testid` attributes, and the cart exposes nine more, so there are 12 in total. Tests find these elements with Playwright `getByTestId`.
+Portable storefront tests run against any storefront URL, so they cannot depend on your markup or class names. The product page exposes three standard `data-testid` attributes, and the cart exposes ten more, so there are 13 in total. Tests find these elements with Playwright `getByTestId`.
 
-Only these 12 IDs are standard. Portable tests still find other storefront UI (product cards, filters, search, the checkout link) by role, label, and text. Your storefront can have other test IDs for its own tests. Portable tests do not read them.
+Only these 13 IDs are standard. Portable tests still find other storefront UI (product cards, filters, search) by role, label, and text. Your storefront can have other test IDs for its own tests. Portable tests do not read them.
 
 ## The product contract
 
@@ -54,6 +54,7 @@ Rules:
 | `cart-line-decrease` | The decrease quantity control of each line, a native `<button>` | Exactly one in each line | The click |
 | `cart-line-remove` | The remove control of each line, a native `<button>` | Exactly one in each line | The click |
 | `cart-status` | The existing cart totals live region with `role="status"` | At least one. It can repeat, for example in the page and the drawer, or once for the whole page | Its text |
+| `cart-checkout` | The checkout link of each populated cart view: a visible native `<a>` with a real `href` to the checkout URL, exposed as a link with a non-empty accessible name in any language | One per populated cart view, so it can repeat in the page and the drawer. Exactly one inside the cart page | The `href`, the link role and name, and the click on the cart page link |
 
 Rules:
 
@@ -63,7 +64,8 @@ Rules:
 - Keep the trigger's accessible name and ARIA, for example `aria-controls`, `aria-haspopup`, and `aria-expanded`. Do not add new test-only attributes.
 - Put `cart-line` on one element per line that holds the whole line, including its quantity input and line controls. Any element works. Do not nest it, and do not put it on other list items, such as recommendations.
 - The cart page and the drawer each render their own `cart-line` elements. In each view, one line contains a given product title.
-- Portable checkout tests use the same `cart-drawer`, `cart-page`, and `cart-line` IDs to find the added line before they click the checkout link. The checkout link has no standard test ID.
+- Portable checkout tests use `cart-drawer`, `cart-page`, and `cart-line` to find the added line, then click the single `cart-checkout` link inside `cart-page`. A checkout link in the drawer does not count.
+- Put `cart-checkout` on the native `<a href>` checkout link only. Do not put it on a disabled placeholder, such as an `aria-disabled` span, or on payment buttons such as Shop Pay. Keep it visible, keep its native link role (no `aria-hidden`, `hidden`, or `role="button"`), and give it a non-empty accessible name. Tests do not match the name text, so any language works.
 - Put the quantity and remove IDs on the native input and buttons inside the line, not on wrappers. Keep their accessible names and native `disabled` state. Tests do not match the button names, so a localized name such as `Entfernen` works.
 - The native input value is the quantity. Do not add test-only attributes for the quantity or pending state.
 - Put `cart-status` on the existing `role="status"` region that announces cart totals updates. Do not move or duplicate it for tests. Keep it exposed to assistive technology; a visually hidden region is fine, an `aria-hidden` one does not count.
@@ -103,6 +105,7 @@ Add the IDs to the elements the page already renders:
       <button data-testid="cart-line-remove" type="submit" aria-label="Remove Classic Tee">Remove</button>
     </li>
   </ul>
+  <a data-testid="cart-checkout" href="https://shop.example/checkouts/cn/abc">Checkout</a>
 </main>
 ```
 
@@ -163,6 +166,7 @@ test("selects a variant and adds it to the cart", async ({ page }) => {
 });
 ```
 
+- Scope `cart-checkout` to `cart-page`, because the drawer can render its own checkout link.
 - Scope `cart-line` to `cart-page` or `cart-drawer`. Do not use `getByRole("main")` or `getByRole("dialog")`, because the page can render both cart views at the same time. Narrow lines by product title, not by `.nth()`, and do not use `.first()` to hide more than one match.
 - Narrow `product-option-value` by accessible name, role, or `href`. Do not use `.nth()`, because option order is store data.
 - Read selection from `aria-current` or `aria-pressed`. Do not read class names or styles.
@@ -178,6 +182,7 @@ test("selects a variant and adds it to the cart", async ({ page }) => {
 - [ ] Exactly one `<button>` on the page has `data-testid="product-add-to-cart"`, with native `disabled` or `aria-disabled="true"` when the selection cannot be added
 - [ ] Exactly one element on `/cart` has `data-testid="cart-page"`, and the drawer is not inside it
 - [ ] Exactly one native `<dialog>` has `data-testid="cart-drawer"`
+- [ ] Each populated cart view has one visible native `<a href>` checkout link with a non-empty accessible name and `data-testid="cart-checkout"`, and the cart page has exactly one
 - [ ] The existing cart totals `role="status"` region has `data-testid="cart-status"` and is not `aria-hidden`
 - [ ] At most one `<button>` or `<a>` that opens the drawer has `data-testid="cart-trigger"`, and plain `/cart` links do not
 - [ ] Each rendered cart line, in the page and in the drawer, has one `data-testid="cart-line"` element that holds its title and controls
