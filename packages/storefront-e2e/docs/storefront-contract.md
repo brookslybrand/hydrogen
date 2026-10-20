@@ -45,11 +45,11 @@ Rules:
 - Test IDs do not replace accessibility. The title stays the page heading, each control keeps an accessible name, and state stays in the attributes above.
 - The test IDs do not add a server-rendering or hydration requirement. They go on the same elements the page already renders. Where the page supports server rendering and no-JavaScript selection, the IDs are on the server-rendered elements.
 
-Scope: the product, product variant, cart, and checkout groups use these IDs to find the product title, option values, and add to cart button. The cart group also uses the cart test IDs below. The suite still finds all other UI by role, label, and text, as the sections below describe. This includes product results, collection filters, search, the cart setup that the checkout group does by itself (its cart lines, drawer, and cart page), and the checkout link. The storefront can have other test IDs for its own tests. The suite does not read them.
+Scope: the product, product variant, cart, and checkout groups use these IDs to find the product title, option values, and add to cart button. The cart and checkout groups also use the cart test IDs below. The suite still finds all other UI by role, label, and text, as the sections below describe. This includes product results, collection filters, search, and the checkout link. The storefront can have other test IDs for its own tests. The suite does not read them.
 
 ## Cart Test IDs
 
-The cart group finds nine cart elements with standard `data-testid` attributes and Playwright `getByTestId`. With the three product test IDs, the suite reads 12 standard test IDs in total:
+The cart group finds nine cart elements with standard `data-testid` attributes and Playwright `getByTestId`. The checkout group reuses three of them, `cart-drawer`, `cart-page`, and `cart-line`, to find the added line. With the three product test IDs, the suite reads 12 standard test IDs in total:
 
 | Test ID | Put it on | Count | Evidence the suite reads |
 | --- | --- | --- | --- |
@@ -79,7 +79,7 @@ Rules:
 - The suite waits until at least one element has `cart-status`, is exposed to assistive technology with `role="status"`, and contains the expected text. It does not need exactly one, and it does not pick a view. An element with the ID but without `role="status"`, or a region hidden with `aria-hidden`, does not count. A status region without the ID does not count.
 - Like the product test IDs, these IDs do not add a server-rendering or hydration requirement.
 
-Scope: the cart group uses these IDs only to find the cart page, the cart drawer, the trigger, the cart lines, the line quantity and remove controls, and the cart totals status. It finds the quantity input and the increase, decrease, and remove buttons by test ID inside the line. It finds the totals status by test ID and `role="status"`, then matches its English text. The checkout group does not use the cart test IDs. It still sets up its own cart by role, label, and text.
+Scope: the cart group uses these IDs only to find the cart page, the cart drawer, the trigger, the cart lines, the line quantity and remove controls, and the cart totals status. It finds the quantity input and the increase, decrease, and remove buttons by test ID inside the line. It finds the totals status by test ID and `role="status"`, then matches its English text. The checkout group uses only `cart-drawer`, `cart-page`, and `cart-line`. After Add to cart, it waits for exactly one matching line in the drawer. On the cart page, it requires exactly one matching line that shows the variant text. It does not use `cart-trigger`, the line quantity and remove IDs, or `cart-status`.
 
 ## Product Results
 
@@ -121,7 +121,7 @@ Set STOREFRONT_SKIP_NO_JS_VARIANTS=true to skip the no-JavaScript check for a st
 
 ## Cart Line Items
 
-In the cart group, each cart line is a visible element with `data-testid="cart-line"` that contains the product title (see Cart Test IDs). The checkout group still finds cart lines as visible list items that contain the product title.
+In the cart and checkout groups, each cart line is a visible element with `data-testid="cart-line"` that contains the product title (see Cart Test IDs).
 
 The cart and checkout groups add a product with the single button that has `data-testid="product-add-to-cart"` (see Product Test IDs). The button must be enabled for the discovered variant. It keeps an accessible name, such as Add to cart.
 
@@ -145,7 +145,7 @@ The suite finds the totals status anywhere on the page by `data-testid="cart-sta
 
 The checkout test verifies only the storefront-owned side of the checkout handoff.
 
-It verifies the added product and variant in the storefront cart, clicks the visible checkout link, and waits for a checkout URL. It does not depend on the external checkout document loading, enter customer data, payment data, or perform any irreversible checkout step.
+It verifies the added product and variant in the storefront cart, clicks the visible checkout link, and waits for a checkout URL. It finds the added line in the drawer and on the cart page with `cart-drawer`, `cart-page`, and `cart-line` (see Cart Test IDs). It still finds the checkout link by role and accessible name, such as Checkout or Continue to checkout, and checks that its `href` targets a checkout URL. It does not depend on the external checkout document loading, enter customer data, payment data, or perform any irreversible checkout step.
 
 If the storefront does not start checkout navigation, the test fails as a contract issue. External checkout availability is outside this suite's boundary.
 
@@ -171,4 +171,4 @@ Operational expectations:
 
 When the storefront contract changes, update the relevant spec matcher, shared helper, and this document together.
 
-The suite reads 12 standard test IDs: three for the product title, option values, and add to cart button, and nine for the cart page, cart drawer, cart trigger, cart lines, cart line quantity and remove controls, and cart status. It finds all other UI by semantic roles and label strings, including all other test groups and the checkout group's own cart setup. It still matches the English cart totals status text inside `cart-status`. Before the suite reads a new test ID, add it to this document.
+The suite reads 12 standard test IDs: three for the product title, option values, and add to cart button, and nine for the cart page, cart drawer, cart trigger, cart lines, cart line quantity and remove controls, and cart status. The checkout group reuses `cart-drawer`, `cart-page`, and `cart-line`. The suite finds all other UI by semantic roles and label strings, including the checkout link. It still matches the English cart totals status text inside `cart-status`. Before the suite reads a new test ID, add it to this document.

@@ -17,7 +17,7 @@ This is a repository skill for agents who maintain the portable storefront suite
 
 Portable storefront tests run against any storefront URL, so they cannot depend on your markup or class names. The product page exposes three standard `data-testid` attributes, and the cart exposes nine more, so there are 12 in total. Tests find these elements with Playwright `getByTestId`.
 
-Only these 12 IDs are standard. Portable tests still find other storefront UI (product cards, filters, search, checkout) by role, label, and text. Your storefront can have other test IDs for its own tests. Portable tests do not read them.
+Only these 12 IDs are standard. Portable tests still find other storefront UI (product cards, filters, search, the checkout link) by role, label, and text. Your storefront can have other test IDs for its own tests. Portable tests do not read them.
 
 ## The product contract
 
@@ -63,6 +63,7 @@ Rules:
 - Keep the trigger's accessible name and ARIA, for example `aria-controls`, `aria-haspopup`, and `aria-expanded`. Do not add new test-only attributes.
 - Put `cart-line` on one element per line that holds the whole line, including its quantity input and line controls. Any element works. Do not nest it, and do not put it on other list items, such as recommendations.
 - The cart page and the drawer each render their own `cart-line` elements. In each view, one line contains a given product title.
+- Portable checkout tests use the same `cart-drawer`, `cart-page`, and `cart-line` IDs to find the added line before they click the checkout link. The checkout link has no standard test ID.
 - Put the quantity and remove IDs on the native input and buttons inside the line, not on wrappers. Keep their accessible names and native `disabled` state. Tests do not match the button names, so a localized name such as `Entfernen` works.
 - The native input value is the quantity. Do not add test-only attributes for the quantity or pending state.
 - Put `cart-status` on the existing `role="status"` region that announces cart totals updates. Do not move or duplicate it for tests. Keep it exposed to assistive technology; a visually hidden region is fine, an `aria-hidden` one does not count.

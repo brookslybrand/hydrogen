@@ -150,7 +150,7 @@ The portable storefront suite in `packages/storefront-e2e` runs against storefro
 
 Read state from native attributes, ARIA, and content: `href`, `aria-current`, `aria-pressed`, native `disabled` or `aria-disabled`, and the title text. Do not add new test-only attributes for state or identity. The target markup must stay accessible.
 
-This exception covers only these 12 IDs in the portable suite. The other test groups, including the checkout group's own cart setup, stay role-first. The cart status text is still English; a language-independent signal is deferred. All other portable-suite locators, and all other suites, stay role-first. `packages/storefront-e2e/docs/storefront-contract.md` is the source of truth. Add a new portable test ID only together with that document. Other test IDs in the target app are allowed, but the portable suite does not read them.
+This exception covers only these 12 IDs in the portable suite. The checkout group reuses `cart-drawer`, `cart-page`, and `cart-line` for its cart setup. The checkout link and the other test groups stay role-first. The cart status text is still English; a language-independent signal is deferred. All other portable-suite locators, and all other suites, stay role-first. `packages/storefront-e2e/docs/storefront-contract.md` is the source of truth. Add a new portable test ID only together with that document. Other test IDs in the target app are allowed, but the portable suite does not read them.
 
 ### Accessibility Improvements During Test Writing
 

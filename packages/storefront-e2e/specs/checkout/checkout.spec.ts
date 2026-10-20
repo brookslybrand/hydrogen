@@ -1,10 +1,17 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 
-import { createContractError } from "../../src/contract";
+import {
+  requireCartDrawer,
+  requireCartLine,
+  requireCartPage,
+  type CartTargetOptions,
+} from "../../src/cart-targets";
+import { createContractError, StorefrontContractError } from "../../src/contract";
 import { requireProductAddToCart } from "../../src/product-targets";
 import { test, type CheckoutTestProduct } from "./config";
 
 const CART_SETTLE_TIMEOUT_MS = 15_000;
+const CART_TARGET_OPTIONS: CartTargetOptions = { timeout: CART_SETTLE_TIMEOUT_MS };
 const CHECKOUT_CONTROL_NAME = /check\s*out|checkout|continue to checkout/i;
 
 type CartExpectation = {
@@ -13,10 +20,105 @@ type CartExpectation = {
   readonly variantLabel: string;
 };
 
+type CartLineOptions = CartTargetOptions & {
+  /** How long to wait for the variant text. Defaults to the expect timeout. */
+  readonly variantTimeout?: number;
+};
+
 test("checkout handoff starts from populated cart", async ({ data, page }) => {
   const expectation = await addProductToCart(page, data.products, data.paths.cart);
 
   await startCheckoutFromPopulatedCart(page, expectation);
+});
+
+test.describe("checkout cart setup helpers", () => {
+  const productPath = "/products/shirt";
+  const expectation: CartExpectation = {
+    cartPath: "/cart",
+    productTitle: "Shirt",
+    variantLabel: "Small",
+  };
+  const options: CartLineOptions = { timeout: 200, variantTimeout: 200 };
+
+  test("scopes the cart page and drawer lines by test ID and allows the same product in both", async ({
+    page,
+  }) => {
+    // Decoy landmarks and list items come first, so an unscoped first() match would find them.
+    await page.setContent(`
+      <main><ul><li>Shirt Small decoy main</li></ul></main>
+      <dialog open><ul><li>Shirt Small decoy dialog</li></ul></dialog>
+      <dialog open data-testid="cart-drawer"><ul>
+        <li>Shirt recommendation</li>
+        ${cartLineHtml("Shirt Small drawer line")}
+      </ul></dialog>
+      <div data-testid="cart-page"><ul>
+        <li>Shirt recommendation</li>
+        ${cartLineHtml("Shirt Small page line")}
+      </ul></div>`);
+
+    await expect(await expectCartLine(page, expectation, options)).toHaveText(
+      "Shirt Small page line",
+    );
+    await expect(await cartOverlayLineFor(page, "Shirt", productPath, options)).toHaveText(
+      "Shirt Small drawer line",
+    );
+  });
+
+  test("fails clearly for a missing or duplicate cart page or cart page line", async ({ page }) => {
+    const cases: [string, RegExp][] = [
+      [
+        `<main><ul>${cartLineHtml("Shirt Small")}</ul></main>`,
+        /exactly one element with data-testid="cart-page".*Found 0\./,
+      ],
+      [
+        `<div data-testid="cart-page"></div><div data-testid="cart-page"><ul>${cartLineHtml("Shirt Small")}</ul></div>`,
+        /exactly one element with data-testid="cart-page".*Found 2\./,
+      ],
+      [
+        `<div data-testid="cart-page"><ul><li>Shirt Small</li></ul></div>`,
+        /cart page renders exactly one element with data-testid="cart-line" that contains "Shirt"\. Found 0\./,
+      ],
+      [
+        `<div data-testid="cart-page"><ul>${cartLineHtml("Shirt Small")}${cartLineHtml("T-Shirt Small")}</ul></div>`,
+        /cart page renders exactly one element with data-testid="cart-line" that contains "Shirt"\. Found 2\./,
+      ],
+    ];
+
+    for (const [html, message] of cases) {
+      await test.step(html, async () => {
+        await page.setContent(html);
+        await expectContractError(expectCartLine(page, expectation, options), message);
+      });
+    }
+  });
+
+  test("fails clearly for a missing drawer or drawer line", async ({ page }) => {
+    await page.setContent(`<dialog open><ul>${cartLineHtml("Shirt Small")}</ul></dialog>`);
+    await expectContractError(
+      cartOverlayLineFor(page, "Shirt", productPath, options),
+      /exactly one element with data-testid="cart-drawer".*Found 0\./,
+    );
+
+    await page.setContent(
+      `<dialog open data-testid="cart-drawer"><ul><li>Shirt Small</li></ul></dialog>`,
+    );
+    await expectContractError(
+      cartOverlayLineFor(page, "Shirt", productPath, options),
+      /cart drawer renders exactly one element with data-testid="cart-line" that contains "Shirt"\. Found 0\./,
+    );
+  });
+
+  test("still fails when the cart page line does not show the variant", async ({ page }) => {
+    await page.setContent(
+      `<div data-testid="cart-page"><ul>${cartLineHtml("Shirt Large")}</ul></div>`,
+    );
+
+    const error = await rejection(expectCartLine(page, expectation, options));
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(StorefrontContractError);
+    expect(String(error)).toContain("Small");
+  });
 });
 
 async function addProductToCart(
@@ -60,7 +162,7 @@ async function tryAddProductToCart(
   if (!isCartEnabled) return null;
 
   await addToCart.click();
-  await expect(cartOverlayLineFor(page, expectation.productTitle)).toBeVisible({
+  await expect(await cartOverlayLineFor(page, expectation.productTitle, product.path)).toBeVisible({
     timeout: CART_SETTLE_TIMEOUT_MS,
   });
   await page.goto(cartPath);
@@ -96,23 +198,38 @@ async function startCheckoutFromPopulatedCart(
   }
 }
 
-async function expectCartLine(page: Page, expectation: CartExpectation): Promise<Locator> {
-  const line = page
-    .getByRole("main")
-    .getByRole("listitem")
-    .filter({ hasText: expectation.productTitle })
-    .first();
-  await expect(line).toBeVisible({ timeout: CART_SETTLE_TIMEOUT_MS });
+async function expectCartLine(
+  page: Page,
+  expectation: CartExpectation,
+  options: CartLineOptions = CART_TARGET_OPTIONS,
+): Promise<Locator> {
+  const cartPage = await requireCartPage(page, expectation.cartPath, options);
+  const line = await requireCartLine(
+    cartPage,
+    "cart page",
+    expectation.productTitle,
+    expectation.cartPath,
+    options,
+  );
+  await expect(line).toBeVisible({ timeout: options.timeout });
 
   if (shouldAssertVariant(expectation.variantLabel)) {
-    await expect(line.getByText(expectation.variantLabel, { exact: false })).toBeVisible();
+    await expect(line.getByText(expectation.variantLabel, { exact: false })).toBeVisible({
+      timeout: options.variantTimeout,
+    });
   }
 
   return line;
 }
 
-function cartOverlayLineFor(page: Page, productTitle: string): Locator {
-  return page.getByRole("dialog").getByRole("listitem").filter({ hasText: productTitle }).first();
+async function cartOverlayLineFor(
+  page: Page,
+  productTitle: string,
+  routePath: string,
+  options: CartTargetOptions = CART_TARGET_OPTIONS,
+): Promise<Locator> {
+  const drawer = await requireCartDrawer(page, routePath, options);
+  return requireCartLine(drawer, "cart drawer", productTitle, routePath, options);
 }
 
 function shouldAssertVariant(variantLabel: string): boolean {
@@ -149,4 +266,25 @@ function checkoutHandoffError(cartPath: string): Error {
 
 function isCheckoutUrl(url: URL, cartPath: string): boolean {
   return /checkout|checkouts/i.test(url.href) || url.pathname.startsWith(`${cartPath}/c/`);
+}
+
+/** A real cart line for helper fixtures. Decoy list items have no test ID. */
+function cartLineHtml(text: string): string {
+  return `<li data-testid="cart-line">${text}</li>`;
+}
+
+async function expectContractError(promise: Promise<unknown>, message: RegExp): Promise<void> {
+  const error = await rejection(promise);
+  expect(error).toBeInstanceOf(StorefrontContractError);
+  expect(String(error)).toMatch(message);
+}
+
+/** Returns the rejection reason, or null when the promise resolves. */
+async function rejection(promise: Promise<unknown>): Promise<unknown> {
+  try {
+    await promise;
+    return null;
+  } catch (error) {
+    return error;
+  }
 }
