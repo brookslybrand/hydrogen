@@ -1,6 +1,6 @@
 import type { Locator, Page } from "@playwright/test";
 
-import { expectProductTitle } from "../../src/product-targets";
+import { expectProductTitle, PRODUCT_OPTION_VALUE_TEST_ID } from "../../src/product-targets";
 import { expect, test, type ProductVariantProduct, type ProductVariantTestData } from "./config";
 
 const MAX_VARIANT_CONTROL_PROBES = 30;
@@ -60,39 +60,57 @@ test.describe("without JavaScript", () => {
 });
 
 test.describe("variant control helpers", () => {
+  const OPTION = `data-testid="${PRODUCT_OPTION_VALUE_TEST_ID}"`;
+  const PRODUCT_URL = "http://storefront.test/products/shirt?storefront_e2e_ref=variant-check";
+
+  /** Serves `html` at PRODUCT_URL so relative variant hrefs resolve like a real product page. */
+  async function gotoProductPage(page: Page, html: string): Promise<void> {
+    await page.route(
+      (url) => url.href === PRODUCT_URL,
+      async (route) => {
+        await route.fulfill({ body: `<!doctype html>${html}`, contentType: "text/html" });
+      },
+    );
+    await page.goto(PRODUCT_URL);
+  }
+
   test("reads variant control accessible names from the browser", async ({ page }) => {
     const href = "http://127.0.0.1/products/shirt?Size=Small";
     const cases = [
       {
         expected: "Size Small",
-        html: `<span id="size-small">Size Small</span><a href="${href}" aria-labelledby="size-small" aria-label="Wrong">S</a>`,
+        html: `<span id="size-small">Size Small</span><a ${OPTION} href="${href}" aria-labelledby="size-small" aria-label="Wrong">S</a>`,
         role: "link",
       },
       {
         expected: "Small",
-        html: `<a href="${href}"><span aria-hidden="true">✓</span> Small</a>`,
+        html: `<a ${OPTION} href="${href}"><span aria-hidden="true">✓</span> Small</a>`,
         role: "link",
       },
       {
         expected: "Blue swatch",
-        html: `<a href="${href}"><img alt="Blue swatch" src="data:,"></a>`,
+        html: `<a ${OPTION} href="${href}"><img alt="Blue swatch" src="data:,"></a>`,
         role: "link",
       },
       {
         expected: `L'été "Grande" \\ size: 10½`,
-        html: `<a href="${href}" aria-label="L'été &quot;Grande&quot; \\ size: 10½">G</a>`,
+        html: `<a ${OPTION} href="${href}" aria-label="L'été &quot;Grande&quot; \\ size: 10½">G</a>`,
         role: "link",
       },
       {
         expected: "Red: dark",
-        html: `<button aria-pressed="true"><span aria-hidden="true">•</span> Red: dark</button>`,
+        html: `<button ${OPTION} aria-pressed="true"><span aria-hidden="true">•</span> Red: dark</button>`,
         role: "button",
       },
     ] as const;
     await page.setContent(`<ul>${cases.map((item) => `<li>${item.html}</li>`).join("")}</ul>`);
 
     for (const [index, item] of cases.entries()) {
-      const control = page.getByRole("listitem").nth(index).getByRole(item.role);
+      const control = page
+        .getByRole("listitem")
+        .nth(index)
+        .getByRole(item.role)
+        .and(optionValues(page));
       expect(await accessibleName(control)).toBe(item.expected);
     }
   });
@@ -100,17 +118,89 @@ test.describe("variant control helpers", () => {
   test("matches current variant links by accessible name and href", async ({ page }) => {
     const target = "http://127.0.0.1/products/shirt?Size=Small&Color=Blue";
     const variantLinks = (peerCurrent: string) => `
-      <a href="${target}" aria-current="true"><span aria-hidden="true">✓</span> Small</a>
-      <a href="http://127.0.0.1/products/shirt?Color=Blue&Size=Small" aria-current="${peerCurrent}"><img alt="Small" src="data:,"></a>
-      <a href="${target}" aria-label="Small fit">Small</a>
-      <a href="http://127.0.0.1/products/shirt?Size=Small&Color=Red">Small</a>`;
+      <nav><a href="${target}">Small</a></nav>
+      <a ${OPTION} href="${target}" aria-current="true"><span aria-hidden="true">✓</span> Small</a>
+      <a ${OPTION} href="http://127.0.0.1/products/shirt?Color=Blue&Size=Small" aria-current="${peerCurrent}"><img alt="Small" src="data:,"></a>
+      <a ${OPTION} href="${target}" aria-label="Small fit">Small</a>
+      <a ${OPTION} href="http://127.0.0.1/products/shirt?Size=Small&Color=Red">Small</a>`;
 
     const name = "Small";
+    // The decoy nav link has the same name and href but is not an option value, so it is ignored.
     await page.setContent(variantLinks("true"));
     await expectCurrentVariantLinks(page, name, target);
 
     await page.setContent(variantLinks("false"));
     expect(await currentVariantLinksState(page, name, target)).not.toBe(ALL_CURRENT);
+
+    // A current link without the option test ID is not evidence of selection.
+    await page.setContent(`<a href="${target}" aria-current="true">Small</a>`);
+    expect(await currentVariantLinksState(page, name, target)).toBe(
+      `no "${name}" link to ${target}`,
+    );
+  });
+
+  test("counts only pressed option value buttons", async ({ page }) => {
+    await page.setContent(`
+      <button aria-pressed="true">Red</button>
+      <button ${OPTION} aria-pressed="false">Red</button>`);
+    await expect(pressedButtons(page, "Red")).toHaveCount(0);
+
+    await page.setContent(`
+      <button aria-pressed="true">Red</button>
+      <button ${OPTION} aria-pressed="true">Red</button>`);
+    await expect(pressedButtons(page, "Red")).toHaveCount(1);
+  });
+
+  test("finds unselected option links by test ID and skips decoys", async ({ page }) => {
+    await gotoProductPage(
+      page,
+      `
+      <nav><a href="/products/shirt?Size=Large">Large</a></nav>
+      <span ${OPTION}><a href="/products/shirt?Size=Huge">Huge</a></span>
+      <a ${OPTION} href="/products/shirt?Size=Small" aria-current="true">Small</a>
+      <a ${OPTION} href="/products/hat?Size=Medium">Medium hat</a>
+      <a ${OPTION} href="/products/shirt?Size=Medium">Medium</a>`,
+    );
+
+    const control = await findVariantControl(page, ["Size"]);
+
+    expect(control).not.toBeNull();
+    if (control === null) return;
+    await expect(control).toHaveAttribute("href", "/products/shirt?Size=Medium");
+    expect(await accessibleName(control)).toBe("Medium");
+  });
+
+  test("finds unselected option buttons by test ID and skips decoys", async ({ page }) => {
+    await gotoProductPage(
+      page,
+      `
+      <nav><a href="/products/shirt?Color=Green">Green</a></nav>
+      <button aria-pressed="false">Wishlist</button>
+      <button ${OPTION} aria-pressed="true">Red</button>
+      <button ${OPTION} aria-pressed="false" disabled>Green</button>
+      <span ${OPTION}><button aria-pressed="false">Yellow</button></span>
+      <button ${OPTION} aria-pressed="false">Blue</button>`,
+    );
+
+    const control = await findVariantControl(page, ["Color"]);
+
+    expect(control).not.toBeNull();
+    if (control === null) return;
+    expect(await accessibleName(control)).toBe("Blue");
+  });
+
+  test("returns no control when option values lack the test ID", async ({ page }) => {
+    await gotoProductPage(
+      page,
+      `
+      <a href="/products/shirt?Size=Medium">Medium</a>
+      <button aria-pressed="false">Blue</button>`,
+    );
+
+    expect(await findVariantControl(page, ["Size", "Color"])).toBeNull();
+    expect(await optionTargetSummary(page)).toBe(
+      `0 data-testid="${PRODUCT_OPTION_VALUE_TEST_ID}" targets, 0 on links or buttons`,
+    );
   });
 });
 
@@ -123,15 +213,15 @@ async function findServerVariantLink(
 
   for (const product of products) {
     const path = productPathWithSentinel(paths, product);
-    checkedPaths.push(path);
     await page.goto(path);
     await expectProductTitle(page, product.title, path);
 
     const link = await findVariantLink(page, product.optionNames);
-    if (link === null) continue;
-
-    const href = await link.getAttribute("href");
-    if (href === null) continue;
+    const href = link === null ? null : await link.getAttribute("href");
+    if (link === null || href === null) {
+      checkedPaths.push(`${path} (${await optionTargetSummary(page)})`);
+      continue;
+    }
 
     return {
       link,
@@ -142,7 +232,7 @@ async function findServerVariantLink(
   }
 
   throw new Error(
-    `No product page exposed a same-product variant link without JavaScript. Checked: ${checkedPaths.join(", ")}. Render existing option values as links to selected-options URLs so selection works before hydration.`,
+    `No product page exposed a same-product variant link without JavaScript. Checked: ${checkedPaths.join(", ")}. Render existing option values as links to selected-options URLs, with data-testid="${PRODUCT_OPTION_VALUE_TEST_ID}" on each <a>, so selection works before hydration.`,
   );
 }
 
@@ -151,12 +241,19 @@ async function selectProductVariant(
   products: readonly ProductVariantProduct[],
   paths: Paths,
 ): Promise<SelectedVariant> {
+  const checkedPaths: string[] = [];
+
   for (const product of products) {
     const selectedVariant = await selectVariantForProduct(page, product, paths);
     if (selectedVariant !== null) return selectedVariant;
+    checkedPaths.push(
+      `${productPathWithSentinel(paths, product)} (${await optionTargetSummary(page)})`,
+    );
   }
 
-  throw new Error("No product page exposed a selectable variant control");
+  throw new Error(
+    `No product page exposed a selectable variant control. Checked: ${checkedPaths.join(", ")}. Put data-testid="${PRODUCT_OPTION_VALUE_TEST_ID}" on each option value <a> or <button> itself.`,
+  );
 }
 
 async function selectVariantForProduct(
@@ -263,7 +360,8 @@ async function currentVariantLinksState(
 ): Promise<string> {
   const expectedUrl = comparableUrl(targetUrl);
   const pageUrl = page.url();
-  const states = await page.getByRole("link", { name, exact: true }).evaluateAll((elements) =>
+  const links = page.getByRole("link", { name, exact: true }).and(optionValues(page));
+  const states = await links.evaluateAll((elements) =>
     elements.map((element) => ({
       current: element.getAttribute("aria-current"),
       href: element.getAttribute("href"),
@@ -279,7 +377,23 @@ async function currentVariantLinksState(
 }
 
 function pressedButtons(page: Page, name: string): Locator {
-  return page.getByRole("button", { name, exact: true, pressed: true });
+  return page.getByRole("button", { name, exact: true, pressed: true }).and(optionValues(page));
+}
+
+/** Option value targets. The test ID must be on the link or button itself. */
+function optionValues(page: Page): Locator {
+  return page.getByTestId(PRODUCT_OPTION_VALUE_TEST_ID);
+}
+
+/** Describes the option value targets on the page for failure messages. */
+async function optionTargetSummary(page: Page): Promise<string> {
+  const targets = await optionValues(page).count();
+  const controls = await page
+    .getByRole("link", { includeHidden: true })
+    .or(page.getByRole("button", { includeHidden: true }))
+    .and(optionValues(page))
+    .count();
+  return `${targets} data-testid="${PRODUCT_OPTION_VALUE_TEST_ID}" targets, ${controls} on links or buttons`;
 }
 
 async function findVariantControl(
@@ -325,7 +439,7 @@ function decodeAriaSnapshotRootName(rootLine: string): string | null {
 }
 
 async function findUnselectedVariantButton(page: Page): Promise<Locator | null> {
-  const buttons = page.getByRole("button");
+  const buttons = page.getByRole("button").and(optionValues(page));
   const count = Math.min(await buttons.count(), MAX_VARIANT_CONTROL_PROBES);
 
   for (let index = 0; index < count; index += 1) {
@@ -342,7 +456,7 @@ async function findVariantLink(
   page: Page,
   optionNames: readonly string[],
 ): Promise<Locator | null> {
-  const links = page.getByRole("link");
+  const links = page.getByRole("link").and(optionValues(page));
   const count = Math.min(await links.count(), MAX_VARIANT_CONTROL_PROBES);
 
   for (let index = 0; index < count; index += 1) {

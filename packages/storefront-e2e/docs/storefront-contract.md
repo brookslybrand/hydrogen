@@ -23,22 +23,27 @@ Required groups fail on route HTTP failures; optional groups skip.
 
 ## Product Test IDs
 
-The suite finds the product detail title with a standard `data-testid` attribute and Playwright `getByTestId`:
+The suite finds two product detail elements with standard `data-testid` attributes and Playwright `getByTestId`:
 
 | Test ID | Put it on | Count on the product page | Evidence the suite reads |
 | --- | --- | --- | --- |
 | `product-title` | The product heading, a native `<h1>` | Exactly one | A visible level-one heading exposed to assistive technology, whose text contains the product title (case does not matter) |
+| `product-option-value` | Each option value control: the native `<a>` or `<button>` itself, not a wrapper | One per rendered option value, so the ID repeats | Accessible name, `href`, `aria-current`, `aria-pressed`, and disabled state |
 
 Exactly one means the whole page. If recommendations, a sticky bar, or a quick-add form render another product title, do not give it the same test ID. A missing or duplicate `product-title` fails the test with a contract error.
 
 Rules:
 
-- Put the ID on the element a buyer reads. Do not put it on a container.
-- A test ID only identifies a kind of element. Do not add new test-only attributes for the suite. Existing app attributes, such as `data-*` used for styling, can stay.
-- Test IDs do not replace accessibility. The title stays the page heading, and its text is the product title.
-- The test ID does not add a server-rendering or hydration requirement. It goes on the same element the page already renders. Where the page supports server rendering, the ID is on the server-rendered element.
+- Put each ID on the element a buyer reads or activates. Do not put it on a container.
+- A test ID only identifies a kind of element. Do not add new test-only attributes for the suite, such as option names, values, variant IDs, or selected state. Existing app attributes, such as `data-*` used for styling, can stay.
+- State comes from native attributes and ARIA:
+  - Option links: `aria-current="true"` on the selected link.
+  - Option buttons: `aria-pressed`, with `aria-pressed="true"` on the selected button.
+  - Option values for combinations that do not exist: buttons with the native `disabled` attribute.
+- Test IDs do not replace accessibility. The title stays the page heading, each control keeps an accessible name, and state stays in the attributes above.
+- The test IDs do not add a server-rendering or hydration requirement. They go on the same elements the page already renders. Where the page supports server rendering and no-JavaScript selection, the IDs are on the server-rendered elements.
 
-Scope: the product and product variant groups use this ID to find the product title. The suite still finds all other UI by role, label, and text, as the sections below describe. This includes product results, collection filters, search, variant options, the add to cart button, cart lines, cart controls, the cart totals status, and the checkout link. The storefront can have other test IDs for its own tests. The suite does not read them.
+Scope: the product and product variant groups use these IDs to find the product title and option values. The suite still finds all other UI by role, label, and text, as the sections below describe. This includes product results, collection filters, search, the add to cart button, cart lines, cart controls, the cart totals status, and the checkout link. The storefront can have other test IDs for its own tests. The suite does not read them.
 
 ## Product Results
 
@@ -62,12 +67,13 @@ The suite discovers a live product title, searches for it, and verifies that pro
 
 ## Variant Options
 
-At least one probed product must expose a selectable variant control. The product heading has `data-testid="product-title"` (see Product Test IDs).
+At least one probed product must expose a selectable variant control. Each control has `data-testid="product-option-value"` (see Product Test IDs). The product heading has `data-testid="product-title"`.
 
 Supported controls:
 
 - Same-product links whose href is a product URL with selected option query params. The selected link has `aria-current="true"`.
 - Buttons with `aria-pressed`. The selected button has `aria-pressed="true"`. Buttons work only with JavaScript; the no-JavaScript check needs links.
+- If the page renders option combinations that do not exist, render them as buttons with the native `disabled` attribute. They keep the test ID. The suite does not select disabled controls.
 
 With JavaScript, selecting a value must put the selection in the URL (for a link, the link's href) and mark the value as selected. Loading that URL directly must render the product title and show the same value as selected. Selection must keep unrelated non-option query params (the suite uses `storefront_e2e_ref=variant-check`).
 
@@ -125,4 +131,4 @@ Operational expectations:
 
 When the storefront contract changes, update the relevant spec matcher, shared helper, and this document together.
 
-The suite reads a test ID only for the product title. It finds all other UI by semantic roles and label strings, including the English cart totals status text. Before the suite reads a new test ID, add it to this document.
+The suite reads test IDs only for the product title and option values. It finds all other UI by semantic roles and label strings, including the English cart totals status text. Before the suite reads a new test ID, add it to this document.
