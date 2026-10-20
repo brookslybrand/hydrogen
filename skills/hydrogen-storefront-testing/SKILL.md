@@ -3,21 +3,22 @@ name: hydrogen-storefront-testing
 description: >
   Repository skill for maintaining the portable storefront e2e suite and its
   reference storefronts.
-  Test ID contract for Hydrogen product pages. Use when adding, reviewing, or
-  testing data-testid attributes on the product title, variant option values,
-  or add to cart button, or when writing Playwright tests for product pages and
-  add to cart. Framework agnostic.
+  Test ID contract for Hydrogen product pages and cart surfaces. Use when
+  adding, reviewing, or testing data-testid attributes on the product title,
+  variant option values, add to cart button, cart page, cart drawer, or cart
+  trigger, or when writing Playwright tests for product pages, add to cart, and
+  the cart. Framework agnostic.
 ---
 
 # Storefront Test IDs
 
 This is a repository skill for agents who maintain the portable storefront suite in `packages/storefront-e2e/` and the reference storefronts in `templates/react-router/`, `examples/nextjs/`, and `examples/nuxt/`. The canonical contract is `packages/storefront-e2e/docs/storefront-contract.md`. When this skill and the contract differ, the contract is correct. Also read `skills/playwright-tests/SKILL.md` for the Playwright rules of this repository.
 
-Portable storefront tests run against any storefront URL, so they cannot depend on your markup or class names. The product page exposes three standard `data-testid` attributes, and tests find these elements with Playwright `getByTestId`.
+Portable storefront tests run against any storefront URL, so they cannot depend on your markup or class names. The product page exposes three standard `data-testid` attributes, and the cart exposes three more. Tests find these elements with Playwright `getByTestId`.
 
-Only these three IDs are standard. Portable tests still find other storefront UI (product cards, filters, search, cart lines, cart controls, cart status, checkout) by role, label, and text. Your storefront can have other test IDs for its own tests. Portable tests do not read them.
+Only these six IDs are standard. Portable tests still find other storefront UI (product cards, filters, search, cart lines, cart line controls, cart status, checkout) by role, label, and text. Your storefront can have other test IDs for its own tests. Portable tests do not read them.
 
-## The contract
+## The product contract
 
 | Test ID | Put it on | Count on the product page | Tests read |
 | --- | --- | --- | --- |
@@ -39,6 +40,21 @@ Rules:
   - The title text is the product title from the Storefront API.
 - Test IDs do not replace accessibility. Keep the `<h1>`, the accessible name on each control, and the state attributes above.
 
+## The cart contract
+
+| Test ID | Put it on | Count | Tests read |
+| --- | --- | --- | --- |
+| `cart-page` | The content root of the `/cart` page, for example its `<main>` | Exactly one on the cart page | Cart lines inside it |
+| `cart-drawer` | The cart drawer, a native `<dialog>` | Exactly one on the whole page | Cart lines inside it |
+| `cart-trigger` | The control that opens the cart drawer, a native `<button>` or a native `<a>` that opens the drawer when clicked | At most one on the whole page. Tests that click it need exactly one | The click |
+
+Rules:
+
+- Keep the drawer outside the `cart-page` element. The drawer can stay in the page on `/cart`, and the IDs keep the two cart views apart.
+- Put `cart-trigger` only on a control that opens the drawer. A link that only goes to `/cart`, for example a fallback link before hydration or on the cart page, is not a trigger. Do not give it the ID.
+- Keep the trigger's accessible name and ARIA, for example `aria-controls`, `aria-haspopup`, and `aria-expanded`. Do not add new test-only attributes.
+- Cart lines, quantity controls, remove controls, and the cart status still use role, label, and text. They do not have standard test IDs.
+
 ## Rendered markup
 
 Add the IDs to the elements the page already renders:
@@ -52,6 +68,15 @@ Add the IDs to the elements the page already renders:
 <button data-testid="product-option-value" type="button" aria-pressed="false" disabled>Large</button>
 
 <button data-testid="product-add-to-cart" type="submit">Add to cart</button>
+
+<!-- Header. -->
+<button data-testid="cart-trigger" type="button" aria-label="Cart, 1 item" aria-controls="cart-drawer" aria-haspopup="dialog">…</button>
+
+<!-- Root layout. -->
+<dialog data-testid="cart-drawer" id="cart-drawer" aria-labelledby="cart-drawer-title">…</dialog>
+
+<!-- /cart route. -->
+<main data-testid="cart-page" id="main-content">…</main>
 ```
 
 Test IDs do not add a server-rendering, no-JavaScript, or hydration requirement, and they do not change those behaviors. Where the page is server-rendered, the IDs are in the server HTML with their elements. Follow `packages/hydrogen/skills/hydrogen-variant-form/SKILL.md` for the URL and no-JavaScript rules for variant options.
@@ -77,14 +102,20 @@ test("selects a variant and adds it to the cart", async ({ page }) => {
   await expect(addToCart).toBeEnabled();
   await addToCart.click();
 
-  // This store opens a cart drawer after add to cart. Find cart UI by role and
-  // text, and wait for the visible result.
+  // This store opens the cart drawer after add to cart. If yours does not,
+  // click page.getByTestId("cart-trigger") first. Find lines by role and text.
   await expect(
-    page.getByRole("dialog").getByRole("listitem").filter({ hasText: "Classic Tee" }),
+    page.getByTestId("cart-drawer").getByRole("listitem").filter({ hasText: "Classic Tee" }),
+  ).toBeVisible();
+
+  await page.goto("/cart");
+  await expect(
+    page.getByTestId("cart-page").getByRole("listitem").filter({ hasText: "Classic Tee" }),
   ).toBeVisible();
 });
 ```
 
+- Scope cart lines to `cart-page` or `cart-drawer`. Do not use `getByRole("main")` or `getByRole("dialog")`, because the page can render both cart views at the same time.
 - Narrow `product-option-value` by accessible name, role, or `href`. Do not use `.nth()`, because option order is store data.
 - Read selection from `aria-current` or `aria-pressed`. Do not read class names or styles.
 - Wait for visible results. Do not wait for timeouts, network idle, or responses.
@@ -97,4 +128,7 @@ test("selects a variant and adds it to the cart", async ({ page }) => {
 - [ ] The selected option has `aria-current="true"` (link) or `aria-pressed="true"` (button)
 - [ ] Option values for combinations that do not exist are buttons with native `disabled`
 - [ ] Exactly one `<button>` on the page has `data-testid="product-add-to-cart"`, with native `disabled` or `aria-disabled="true"` when the selection cannot be added
+- [ ] Exactly one element on `/cart` has `data-testid="cart-page"`, and the drawer is not inside it
+- [ ] Exactly one native `<dialog>` has `data-testid="cart-drawer"`
+- [ ] At most one `<button>` or `<a>` that opens the drawer has `data-testid="cart-trigger"`, and plain `/cart` links do not
 - [ ] No new test-only attributes are on these elements

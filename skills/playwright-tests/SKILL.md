@@ -135,15 +135,18 @@ Test IDs are acceptable when they disambiguate duplicated UI that is already sem
 
 ### Portable Storefront Test IDs
 
-The portable storefront suite in `packages/storefront-e2e` runs against storefronts it does not own, so it finds three product elements with `getByTestId` first:
+The portable storefront suite in `packages/storefront-e2e` runs against storefronts it does not own, so it finds three product elements and three cart elements with `getByTestId` first:
 
 - `product-title` on the product detail `<h1>` (exactly one on the page)
 - `product-option-value` on each option value `<a>` or `<button>` (the ID repeats; narrow it by accessible name or `href`)
 - `product-add-to-cart` on the add to cart `<button>` (exactly one on the page)
+- `cart-page` on the `/cart` page content root (exactly one on the cart page; scope cart page lines to it)
+- `cart-drawer` on the cart drawer `<dialog>` (exactly one on the page; scope drawer lines to it)
+- `cart-trigger` on the `<button>` or `<a>` that opens the cart drawer (exactly one when the suite clicks it; plain `/cart` links do not get it)
 
 Read state from native attributes, ARIA, and content: `href`, `aria-current`, `aria-pressed`, native `disabled` or `aria-disabled`, and the title text. Do not add new test-only attributes for state or identity. The target markup must stay accessible.
 
-This exception covers only these three IDs in the portable suite. All other portable-suite locators, and all other suites, stay role-first. `packages/storefront-e2e/docs/storefront-contract.md` is the source of truth. Add a new portable test ID only together with that document. Other test IDs in the target app are allowed, but the portable suite does not read them.
+This exception covers only these six IDs in the portable suite. Cart lines, cart line controls, the cart totals status, and checkout stay role-first. All other portable-suite locators, and all other suites, stay role-first. `packages/storefront-e2e/docs/storefront-contract.md` is the source of truth. Add a new portable test ID only together with that document. Other test IDs in the target app are allowed, but the portable suite does not read them.
 
 ### Accessibility Improvements During Test Writing
 
