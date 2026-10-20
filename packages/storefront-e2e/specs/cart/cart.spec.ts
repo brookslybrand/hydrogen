@@ -3,6 +3,7 @@ import { expect, type Locator, type Page } from "@playwright/test";
 import {
   requireCartDrawer,
   requireCartLine,
+  requireCartLineControl,
   requireCartPage,
   requireCartTrigger,
   type CartTargetOptions,
@@ -14,8 +15,6 @@ import { test, type CartTestProduct } from "./config";
 const CART_SETTLE_TIMEOUT_MS = 15_000;
 const CART_TARGET_OPTIONS: CartTargetOptions = { timeout: CART_SETTLE_TIMEOUT_MS };
 const REMOVE_CONTROL_NAME = /remove/i;
-const INCREASE_CONTROL_NAME = /increase|^\+$/i;
-const DECREASE_CONTROL_NAME = /decrease|^[-−]$/i;
 const CART_ENDPOINT_PATTERN = "**/api/cart";
 const CART_TOTALS_UPDATING_TEXT = "Updating cart totals";
 const CART_TOTALS_UPDATED_TEXT = "Cart totals updated";
@@ -305,6 +304,98 @@ test.describe("cart target helpers", () => {
       /native <button> or <a> control that opens the cart drawer\. Found <div>\./,
     );
   });
+
+  test("changes quantity with the line's test ID controls and ignores decoy inputs and buttons", async ({
+    page,
+  }) => {
+    for (const inputType of ["text", "number"] as const) {
+      await test.step(`${inputType} input`, async () => {
+        // The other line comes first, so a page-level match would find its controls.
+        await page.setContent(`<div data-testid="cart-page"><ul>
+          ${quantityLineHtml("Hat", inputType, 5)}
+          ${quantityLineHtml("Shirt", inputType, 1)}
+        </ul></div>`);
+        const line = await cartLineFor(page, "Shirt", cartPath, options);
+        const quantityInput = await quantityInputFor(line, cartPath, options);
+
+        await quantityInput.fill("3");
+        expect(await numericInputValue(quantityInput)).toBe(3);
+        await stepCartLineQuantity(line, "increase", cartPath, options);
+        expect(await numericInputValue(quantityInput)).toBe(4);
+        await stepCartLineQuantity(line, "decrease", cartPath, options);
+        expect(await numericInputValue(quantityInput)).toBe(3);
+
+        const otherLine = await cartLineFor(page, "Hat", cartPath, options);
+        expect(await numericInputValue(await quantityInputFor(otherLine, cartPath, options))).toBe(
+          5,
+        );
+        expect(await page.evaluate(() => "decoyClicked" in window)).toBe(false);
+      });
+    }
+  });
+
+  test("fails clearly for a missing, duplicate, non-native, or hidden quantity input", async ({
+    page,
+  }) => {
+    const quantity = `<input type="number" data-testid="cart-line-quantity" value="1">`;
+    const cases: [string, RegExp][] = [
+      [
+        `<input type="text" aria-label="Quantity" value="1"><input type="number" aria-label="Quantity" value="1">`,
+        /cart line renders exactly one element with data-testid="cart-line-quantity" \(the quantity input\)\. Found 0\./,
+      ],
+      [`${quantity}${quantity}`, /data-testid="cart-line-quantity".*Found 2\./],
+      [
+        `<div data-testid="cart-line-quantity" role="spinbutton" aria-valuenow="1">1</div>`,
+        /native <input> quantity input\. Found <div>\./,
+      ],
+      [
+        `<input type="number" data-testid="cart-line-quantity" value="1" hidden>`,
+        /quantity input with data-testid="cart-line-quantity" is visible in the cart line\./,
+      ],
+    ];
+
+    for (const [controls, message] of cases) {
+      await test.step(controls, async () => {
+        // The other line has a real quantity input. It must not count for Shirt.
+        await page.setContent(`<div data-testid="cart-page"><ul>
+          <li data-testid="cart-line">Hat ${quantity}</li>
+          <li data-testid="cart-line">Shirt ${controls}</li>
+        </ul></div>`);
+        const line = await cartLineFor(page, "Shirt", cartPath, options);
+        await expectContractError(quantityInputFor(line, cartPath, options), message);
+      });
+    }
+  });
+
+  test("fails clearly for a missing, duplicate, or non-button increase or decrease control", async ({
+    page,
+  }) => {
+    const quantity = `<input type="number" data-testid="cart-line-quantity" value="2">`;
+    const decrease = `<button type="button" data-testid="cart-line-decrease">-</button>`;
+    const cases: ["increase" | "decrease", string, RegExp][] = [
+      [
+        "increase",
+        `<button type="button" aria-label="Increase quantity">+</button>`,
+        /cart line renders exactly one element with data-testid="cart-line-increase" \(the increase quantity button\)\. Found 0\./,
+      ],
+      ["decrease", `${decrease}${decrease}`, /data-testid="cart-line-decrease".*Found 2\./],
+      [
+        "increase",
+        `<a href="#" data-testid="cart-line-increase">+</a>`,
+        /native <button> increase quantity button\. Found <a>\./,
+      ],
+    ];
+
+    for (const [control, controls, message] of cases) {
+      await test.step(controls, async () => {
+        await page.setContent(`<div data-testid="cart-page"><ul>
+          <li data-testid="cart-line">Shirt ${quantity}${controls}</li>
+        </ul></div>`);
+        const line = await cartLineFor(page, "Shirt", cartPath, options);
+        await expectContractError(stepCartLineQuantity(line, control, cartPath, options), message);
+      });
+    }
+  });
 });
 
 function createRequestGate(): { wait: Promise<void>; release: () => void } {
@@ -412,40 +503,32 @@ async function expectCartLine(page: Page, expectation: CartExpectation): Promise
 
 async function increaseCartLineQuantity(page: Page, expectation: CartExpectation): Promise<void> {
   const line = await expectCartLine(page, expectation);
-  const quantityInput = await quantityInputFor(line, expectation.cartPath);
-  const initialQuantity = await numericInputValue(quantityInput);
-  const increase = await lineButton(
-    line,
-    INCREASE_CONTROL_NAME,
-    "increase quantity",
-    expectation.cartPath,
-  );
-
-  await increase.click();
-  await expect
-    .poll(() => numericInputValue(quantityInput), {
-      message: `Expected cart line quantity to increase from ${initialQuantity} to ${initialQuantity + 1}.`,
-    })
-    .toBe(initialQuantity + 1);
+  await stepCartLineQuantity(line, "increase", expectation.cartPath);
 }
 
 async function decreaseCartLineQuantity(page: Page, expectation: CartExpectation): Promise<void> {
   const line = await expectCartLine(page, expectation);
-  const quantityInput = await quantityInputFor(line, expectation.cartPath);
-  const initialQuantity = await numericInputValue(quantityInput);
-  const decrease = await lineButton(
-    line,
-    DECREASE_CONTROL_NAME,
-    "decrease quantity",
-    expectation.cartPath,
-  );
+  await stepCartLineQuantity(line, "decrease", expectation.cartPath);
+}
 
-  await decrease.click();
-  await expect
-    .poll(() => numericInputValue(quantityInput), {
-      message: `Expected cart line quantity to decrease from ${initialQuantity} to ${initialQuantity - 1} after quantity increase succeeded.`,
-    })
-    .toBe(initialQuantity - 1);
+/** Clicks the line's increase or decrease button and waits for the native input value. */
+async function stepCartLineQuantity(
+  line: Locator,
+  control: "increase" | "decrease",
+  cartPath: string,
+  options: CartTargetOptions = CART_TARGET_OPTIONS,
+): Promise<void> {
+  const quantityInput = await quantityInputFor(line, cartPath, options);
+  const initialQuantity = await numericInputValue(quantityInput);
+  const button = await requireCartLineControl(line, control, cartPath, options);
+  const expectedQuantity = control === "increase" ? initialQuantity + 1 : initialQuantity - 1;
+  const message =
+    control === "increase"
+      ? `Expected cart line quantity to increase from ${initialQuantity} to ${expectedQuantity}.`
+      : `Expected cart line quantity to decrease from ${initialQuantity} to ${expectedQuantity} after quantity increase succeeded.`;
+
+  await button.click();
+  await expect.poll(() => numericInputValue(quantityInput), { message }).toBe(expectedQuantity);
 }
 
 async function removeCartLine(page: Page, expectation: CartExpectation): Promise<void> {
@@ -523,20 +606,12 @@ async function cartLineFor(
   return requireCartLine(cartPage, "cart page", productTitle, cartPath, options);
 }
 
-async function quantityInputFor(line: Locator, cartPath: string): Promise<Locator> {
-  const textbox = line.getByRole("textbox").first();
-  if (await textbox.isVisible().catch(() => false)) return textbox;
-
-  const spinbutton = line.getByRole("spinbutton").first();
-  if (await spinbutton.isVisible().catch(() => false)) return spinbutton;
-
-  throw createContractError({
-    capability: "cart-line",
-    routePath: cartPath,
-    expectation: "Cart line item exposes a visible quantity input.",
-    likelyFix: "Label the cart line quantity control and keep it inside the line item.",
-    docsAnchor: "#cart-line-items",
-  });
+async function quantityInputFor(
+  line: Locator,
+  cartPath: string,
+  options: CartTargetOptions = CART_TARGET_OPTIONS,
+): Promise<Locator> {
+  return requireCartLineControl(line, "quantity", cartPath, options);
 }
 
 async function numericInputValue(input: Locator): Promise<number> {
@@ -570,6 +645,28 @@ async function lineButton(
 /** A real cart line for helper fixtures. Decoy list items have no test ID. */
 function cartLineHtml(text: string): string {
   return `<li data-testid="cart-line">${text}</li>`;
+}
+
+/**
+ * A helper fixture line with working quantity controls. English-named decoy
+ * inputs and buttons come first; the real controls have test IDs and German names.
+ */
+function quantityLineHtml(title: string, inputType: "text" | "number", quantity: number): string {
+  return `<li data-testid="cart-line">
+    <span>${title}</span>
+    <input type="text" aria-label="Quantity" value="9">
+    <input type="number" aria-label="Quantity" value="9">
+    <button type="button" aria-label="Increase quantity" onclick="window.decoyClicked = true">+</button>
+    <button type="button" aria-label="Decrease quantity" onclick="window.decoyClicked = true">-</button>
+    <input type="${inputType}" data-testid="cart-line-quantity" aria-label="Menge" value="${quantity}">
+    <button type="button" data-testid="cart-line-increase" aria-label="Mehr" onclick="${quantityStepScript(1)}">↑</button>
+    <button type="button" data-testid="cart-line-decrease" aria-label="Weniger" onclick="${quantityStepScript(-1)}">↓</button>
+  </li>`;
+}
+
+/** Inline click handler that changes the line's quantity input by `delta`. */
+function quantityStepScript(delta: number): string {
+  return `const input = this.closest('[data-testid=cart-line]').querySelector('[data-testid=cart-line-quantity]'); input.value = String(Number(input.value) + ${delta});`;
 }
 
 async function wasTriggerClicked(page: Page): Promise<boolean> {

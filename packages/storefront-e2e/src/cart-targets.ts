@@ -7,6 +7,9 @@ export const CART_PAGE_TEST_ID = "cart-page";
 export const CART_DRAWER_TEST_ID = "cart-drawer";
 export const CART_TRIGGER_TEST_ID = "cart-trigger";
 export const CART_LINE_TEST_ID = "cart-line";
+export const CART_LINE_QUANTITY_TEST_ID = "cart-line-quantity";
+export const CART_LINE_INCREASE_TEST_ID = "cart-line-increase";
+export const CART_LINE_DECREASE_TEST_ID = "cart-line-decrease";
 
 type SingleCartTarget = {
   readonly capability: ContractCapability;
@@ -42,13 +45,36 @@ const CART_TRIGGER_TARGET: SingleCartTarget = {
   testId: CART_TRIGGER_TEST_ID,
 };
 
+const CART_LINE_CONTROL_TARGETS = {
+  quantity: {
+    capability: "cart-line",
+    description: "quantity input",
+    elements: ["input"],
+    testId: CART_LINE_QUANTITY_TEST_ID,
+  },
+  increase: {
+    capability: "cart-line",
+    description: "increase quantity button",
+    elements: ["button"],
+    testId: CART_LINE_INCREASE_TEST_ID,
+  },
+  decrease: {
+    capability: "cart-line",
+    description: "decrease quantity button",
+    elements: ["button"],
+    testId: CART_LINE_DECREASE_TEST_ID,
+  },
+} as const satisfies Record<string, SingleCartTarget>;
+
+export type CartLineControl = keyof typeof CART_LINE_CONTROL_TARGETS;
+
 /** Returns the single cart page content root. */
 export async function requireCartPage(
   page: Page,
   routePath: string,
   options: CartTargetOptions = {},
 ): Promise<Locator> {
-  return requireSingleCartTarget(page, CART_PAGE_TARGET, routePath, options);
+  return requireSingleCartTarget(page, "page", CART_PAGE_TARGET, routePath, options);
 }
 
 /** Returns the single native cart drawer <dialog>. */
@@ -57,7 +83,7 @@ export async function requireCartDrawer(
   routePath: string,
   options: CartTargetOptions = {},
 ): Promise<Locator> {
-  return requireSingleCartTarget(page, CART_DRAWER_TARGET, routePath, options);
+  return requireSingleCartTarget(page, "page", CART_DRAWER_TARGET, routePath, options);
 }
 
 /** Returns the single native <button> or <a> that opens the cart drawer. */
@@ -66,7 +92,7 @@ export async function requireCartTrigger(
   routePath: string,
   options: CartTargetOptions = {},
 ): Promise<Locator> {
-  return requireSingleCartTarget(page, CART_TRIGGER_TARGET, routePath, options);
+  return requireSingleCartTarget(page, "page", CART_TRIGGER_TARGET, routePath, options);
 }
 
 /**
@@ -103,13 +129,45 @@ export async function requireCartLine(
   return line;
 }
 
+/**
+ * Returns the single visible quantity <input>, increase <button>, or decrease
+ * <button> inside `line`. The native input value stays the quantity.
+ */
+export async function requireCartLineControl(
+  line: Locator,
+  control: CartLineControl,
+  routePath: string,
+  options: CartTargetOptions = {},
+): Promise<Locator> {
+  const target = CART_LINE_CONTROL_TARGETS[control];
+  const locator = await requireSingleCartTarget(line, "cart line", target, routePath, options);
+  const isVisible = await expect(locator)
+    .toBeVisible({ timeout: options.timeout })
+    .then(
+      () => true,
+      () => false,
+    );
+  if (!isVisible) {
+    throw createContractError({
+      capability: target.capability,
+      routePath,
+      expectation: `The ${target.description} with data-testid="${target.testId}" is visible in the cart line.`,
+      likelyFix: `Keep the cart line ${target.description} visible.`,
+      docsAnchor: "#cart-test-ids",
+    });
+  }
+
+  return locator;
+}
+
 async function requireSingleCartTarget(
-  page: Page,
+  scope: Page | Locator,
+  scopeDescription: string,
   target: SingleCartTarget,
   routePath: string,
   { timeout }: CartTargetOptions,
 ): Promise<Locator> {
-  const locator = page.getByTestId(target.testId);
+  const locator = scope.getByTestId(target.testId);
   const attribute = `data-testid="${target.testId}"`;
 
   try {
@@ -119,7 +177,7 @@ async function requireSingleCartTarget(
     throw createContractError({
       capability: target.capability,
       routePath,
-      expectation: `The page renders exactly one element with ${attribute} (the ${target.description}). Found ${count}.`,
+      expectation: `The ${scopeDescription} renders exactly one element with ${attribute} (the ${target.description}). Found ${count}.`,
       likelyFix:
         count === 0
           ? `Add ${attribute} to the ${target.description}.`
