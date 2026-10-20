@@ -10,7 +10,7 @@ description: >
 
 ### The Golden Rules
 
-1. **Use role-based locators** - Never CSS classes unless absolutely necessary. Exception: the portable storefront suite uses its three documented product test IDs (see [Portable Storefront Test IDs](#portable-storefront-test-ids))
+1. **Use role-based locators** - Never CSS classes unless absolutely necessary. Exception: the portable storefront suite uses its documented standard test IDs (see [Portable Storefront Test IDs](#portable-storefront-test-ids))
 2. **Assert absence broadly, presence specifically** - Wide net for "not there", scoped for "is there"
 3. **Never use timeouts or networkidle** - Wait for visible effects only
 4. **Improve accessibility while testing** - Tests drive better markup
@@ -135,11 +135,13 @@ Test IDs are acceptable when they disambiguate duplicated UI that is already sem
 
 ### Portable Storefront Test IDs
 
-The portable storefront suite in `packages/storefront-e2e` runs against storefronts it does not own, so it finds three product elements and ten cart elements (13 IDs in total) with `getByTestId` first:
+The portable storefront suite in `packages/storefront-e2e` runs against storefronts it does not own, so it finds three product elements, two product results elements, and ten cart elements (15 IDs in total) with `getByTestId` first:
 
 - `product-title` on the product detail `<h1>` (exactly one on the page)
 - `product-option-value` on each option value `<a>` or `<button>` (the ID repeats; narrow it by accessible name or `href`)
 - `product-add-to-cart` on the add to cart `<button>` (exactly one on the page)
+- `product-results` on the existing collection or search results container (exactly one on the page; recommendations and predictive search do not get it)
+- `product-card` on the primary native `<a href>` product link of each result (the ID repeats; scope it to `product-results`, read only visible cards, narrow it by `href`, then check the link role and an accessible name that contains the product title; count results by unique product URL path)
 - `cart-page` on the `/cart` page content root (exactly one on the cart page; scope cart page lines to it)
 - `cart-drawer` on the cart drawer `<dialog>` (exactly one on the page; scope drawer lines to it)
 - `cart-trigger` on the `<button>` or `<a>` that opens the cart drawer (exactly one when the suite clicks it; plain `/cart` links do not get it)
@@ -151,7 +153,7 @@ The portable storefront suite in `packages/storefront-e2e` runs against storefro
 
 Read state from native attributes, ARIA, and content: `href`, `aria-current`, `aria-pressed`, native `disabled` or `aria-disabled`, and the title text. Do not add new test-only attributes for state or identity. The target markup must stay accessible.
 
-This exception covers only these 13 IDs in the portable suite. The checkout group uses `cart-drawer`, `cart-page`, `cart-line`, and `cart-checkout`. The other test groups stay role-first. The cart status text is still English; a language-independent signal is deferred. All other portable-suite locators, and all other suites, stay role-first. `packages/storefront-e2e/docs/storefront-contract.md` is the source of truth. Add a new portable test ID only together with that document. Other test IDs in the target app are allowed, but the portable suite does not read them.
+This exception covers only these 15 IDs in the portable suite. The checkout group uses `cart-drawer`, `cart-page`, `cart-line`, and `cart-checkout`. The collection and collection filter groups use `product-results` and `product-card`; filter controls stay label-based. The other test groups, including search, stay role-first. The cart status text is still English; a language-independent signal is deferred. All other portable-suite locators, and all other suites, stay role-first. `packages/storefront-e2e/docs/storefront-contract.md` is the source of truth. Add a new portable test ID only together with that document. Other test IDs in the target app are allowed, but the portable suite does not read them.
 
 ### Accessibility Improvements During Test Writing
 

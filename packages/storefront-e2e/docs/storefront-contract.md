@@ -45,11 +45,11 @@ Rules:
 - Test IDs do not replace accessibility. The title stays the page heading, each control keeps an accessible name, and state stays in the attributes above.
 - The test IDs do not add a server-rendering or hydration requirement. They go on the same elements the page already renders. Where the page supports server rendering and no-JavaScript selection, the IDs are on the server-rendered elements.
 
-Scope: the product, product variant, cart, and checkout groups use these IDs to find the product title, option values, and add to cart button. The cart and checkout groups also use the cart test IDs below. The suite still finds all other UI by role, label, and text, as the sections below describe. This includes product results, collection filters, and search. The storefront can have other test IDs for its own tests. The suite does not read them.
+Scope: the product, product variant, cart, and checkout groups use these IDs to find the product title, option values, and add to cart button. The cart and checkout groups also use the cart test IDs below. The collection and collection filter groups use the product results test IDs below. The suite still finds all other UI by role, label, and text, as the sections below describe. This includes collection filter controls and search. The storefront can have other test IDs for its own tests. The suite does not read them.
 
 ## Cart Test IDs
 
-The suite finds ten cart elements with standard `data-testid` attributes and Playwright `getByTestId`. The cart group uses the first nine. The checkout group uses `cart-drawer`, `cart-page`, `cart-line`, and `cart-checkout`. With the three product test IDs, the suite reads 13 standard test IDs in total:
+The suite finds ten cart elements with standard `data-testid` attributes and Playwright `getByTestId`. The cart group uses the first nine. The checkout group uses `cart-drawer`, `cart-page`, `cart-line`, and `cart-checkout`. With the three product test IDs and the two product results test IDs, the suite reads 15 standard test IDs in total:
 
 | Test ID | Put it on | Count | Evidence the suite reads |
 | --- | --- | --- | --- |
@@ -86,15 +86,32 @@ Scope: the cart group uses these IDs only to find the cart page, the cart drawer
 
 ## Product Results
 
-Collection and search pages must expose product cards as accessible links to product detail pages.
+Collection and search pages must expose product cards as accessible links to product detail pages. The suite finds them with two standard `data-testid` attributes and Playwright `getByTestId`:
 
-Discovery uses link roles, label strings, and link paths.
+| Test ID | Put it on | Count | Evidence the suite reads |
+| --- | --- | --- | --- |
+| `product-results` | The existing element that holds the product results of a collection or search page, for example the grid list or its wrapper | Exactly one on the whole page | The suite finds product cards only inside it |
+| `product-card` | The primary product link of each result: a native `<a>` with a real `href` to the product detail page, visible and exposed to assistive technology as a link whose accessible name contains the product title | One per rendered result, so the ID repeats | The `href`, visibility, the link role, and the accessible name |
+
+A missing or duplicate `product-results` fails the test with a contract error. Inside the results, a visible `product-card` that is not a native `<a>`, or that has a missing, empty, or non-product `href`, also fails. Results with no visible `product-card` link also fail. The suite reads and checks only visible cards. Hidden cards, such as responsive copies hidden with CSS or the `hidden` attribute, do not count and are not checked.
+
+Rules:
+
+- Put `product-results` on the main results only. Do not put it on recommendations, recently viewed products, or predictive search results. Those can render their own product cards; the suite ignores cards outside `product-results`.
+- Put `product-card` on the primary `<a href>` product link of each result, not on the card wrapper, such as an `<article>` or list item. If a card has more than one link to the product, for example an image link and a title link, mark only one. The suite does not match the visible text, but the accessible name must contain the product title.
+- Keep the link visible with its native link role. Do not hide it with `hidden` or `aria-hidden`, and do not override its role.
+- Use existing elements. Do not add a wrapper, change the layout, or add test-only attributes for the suite. An element can have only one `data-testid`, so if the grid already has another test ID, put `product-results` on an existing parent of the grid.
+- Like the other test IDs, these IDs do not add a server-rendering or hydration requirement.
+
+Scope: the collection group finds the single `product-results` element, then the visible `product-card` link whose `href` path ends with `/products/:handle` for a product from the Storefront API. A path prefix, such as a locale, is allowed. It checks that the same link still has that path, then that it is exposed as a link whose accessible name contains the product title (case does not matter). A card for another product does not match, even when its title contains the requested title. The collection filter group counts the unique product URL paths of the visible `product-card` links inside `product-results`. The search group does not use these IDs yet.
 
 ## Collection Filters
 
-At least one probed collection must expose a visible, enabled checkbox filter that changes the URL, returns products, and reduces the visible product-link count when selected. Filters may auto-submit or use a visible Apply filters/Show results button.
+At least one probed collection must expose a visible, enabled checkbox filter that changes the URL, returns products, and reduces the visible product card count when selected. Filters may auto-submit or use a visible Apply filters/Show results button.
 
-Filter labels must include a count like Color Red (4). The suite uses that count to choose a filter that narrows the visible product links, then asserts the filtered result count does not exceed the label count. Browser Back after a filter selection must restore the previous URL and show the same filter unchecked. Missing Storefront API filter data skips the collection filter group.
+The suite counts results as the unique product URL paths of the visible `product-card` links inside `product-results` (see Product Results). Product links outside the results, such as navigation or recommendations, do not count.
+
+Filter labels must include a count like Color Red (4). The suite uses that count to choose a filter that narrows the visible product cards, then asserts the filtered result count does not exceed the label count. Browser Back after a filter selection must restore the previous URL and show the same filter unchecked. Missing Storefront API filter data skips the collection filter group.
 
 When a probed collection exposes a Storefront API PRICE_RANGE filter, the page must render the price bounds as spinbuttons whose accessible names start with Minimum price and Maximum price. Typing a decimal bound such as 12.5 must put that exact value in the filter.v.price.gte or filter.v.price.lte URL param and keep it in the input. A storefront with no price range filter skips this check.
 
@@ -174,4 +191,4 @@ Operational expectations:
 
 When the storefront contract changes, update the relevant spec matcher, shared helper, and this document together.
 
-The suite reads 13 standard test IDs: three for the product title, option values, and add to cart button, nine for the cart page, cart drawer, cart trigger, cart lines, cart line quantity and remove controls, and cart status, and `cart-checkout` for the checkout link. The checkout group uses `cart-drawer`, `cart-page`, `cart-line`, and `cart-checkout`. The suite finds all other UI by semantic roles and label strings. It still matches the English cart totals status text inside `cart-status`. Before the suite reads a new test ID, add it to this document.
+The suite reads 15 standard test IDs: three for the product title, option values, and add to cart button, nine for the cart page, cart drawer, cart trigger, cart lines, cart line quantity and remove controls, and cart status, `cart-checkout` for the checkout link, and `product-results` and `product-card` for collection product results. The collection and collection filter groups use `product-results` and `product-card`. The checkout group uses `cart-drawer`, `cart-page`, `cart-line`, and `cart-checkout`. The suite finds all other UI by semantic roles and label strings. It still matches the English cart totals status text inside `cart-status`. Before the suite reads a new test ID, add it to this document.

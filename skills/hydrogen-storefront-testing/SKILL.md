@@ -3,21 +3,23 @@ name: hydrogen-storefront-testing
 description: >
   Repository skill for maintaining the portable storefront e2e suite and its
   reference storefronts.
-  Test ID contract for Hydrogen product pages and cart surfaces. Use when
-  adding, reviewing, or testing data-testid attributes on the product title,
-  variant option values, add to cart button, cart page, cart drawer, cart
-  trigger, cart lines, cart line quantity and remove controls, cart status, or
-  checkout link, or when writing Playwright tests for product pages, add to
-  cart, the cart, and the checkout handoff. Framework agnostic.
+  Test ID contract for Hydrogen product pages, collection and search product
+  results, and cart surfaces. Use when adding, reviewing, or testing
+  data-testid attributes on the product title, variant option values, add to
+  cart button, product results and product card links, cart page, cart drawer,
+  cart trigger, cart lines, cart line quantity and remove controls, cart
+  status, or checkout link, or when writing Playwright tests for product pages,
+  collection results, add to cart, the cart, and the checkout handoff.
+  Framework agnostic.
 ---
 
 # Storefront Test IDs
 
 This is a repository skill for agents who maintain the portable storefront suite in `packages/storefront-e2e/` and the reference storefronts in `templates/react-router/`, `examples/nextjs/`, and `examples/nuxt/`. The canonical contract is `packages/storefront-e2e/docs/storefront-contract.md`. When this skill and the contract differ, the contract is correct. Also read `skills/playwright-tests/SKILL.md` for the Playwright rules of this repository.
 
-Portable storefront tests run against any storefront URL, so they cannot depend on your markup or class names. The product page exposes three standard `data-testid` attributes, and the cart exposes ten more, so there are 13 in total. Tests find these elements with Playwright `getByTestId`.
+Portable storefront tests run against any storefront URL, so they cannot depend on your markup or class names. The product page exposes three standard `data-testid` attributes, collection and search results expose two, and the cart exposes ten more, so there are 15 in total. Tests find these elements with Playwright `getByTestId`.
 
-Only these 13 IDs are standard. Portable tests still find other storefront UI (product cards, filters, search) by role, label, and text. Your storefront can have other test IDs for its own tests. Portable tests do not read them.
+Only these 15 IDs are standard. Portable tests still find other storefront UI (filters, search) by role, label, and text. Your storefront can have other test IDs for its own tests. Portable tests do not read them.
 
 ## The product contract
 
@@ -40,6 +42,20 @@ Rules:
   - The add to cart button has native `disabled` or `aria-disabled="true"` when the selection cannot be added, for example no variant is selected or the variant is sold out. Keep your existing interaction behavior. For example, an `aria-disabled` button can still move focus to the first option on click.
   - The title text is the product title from the Storefront API.
 - Test IDs do not replace accessibility. Keep the `<h1>`, the accessible name on each control, and the state attributes above.
+
+## The product results contract
+
+| Test ID | Put it on | Count | Tests read |
+| --- | --- | --- | --- |
+| `product-results` | The existing element that holds the collection or search product results, for example the grid list or its wrapper | Exactly one on the whole page | Product cards inside it |
+| `product-card` | The primary product link of each result: a visible native `<a>` with a real `href` to the product page, exposed as a link whose accessible name contains the product title | One per rendered result, so the ID repeats | The `href`, the link role, and the accessible name |
+
+Rules:
+
+- Put `product-results` on the main results only. Do not put it on recommendations or predictive search results. Product cards outside `product-results` do not count.
+- Put `product-card` on the primary `<a href>` product link, not on the card wrapper, such as an `<article>` or list item. If a card has an image link and a title link to the same product, mark only one.
+- Keep the link visible with its native link role (no `aria-hidden`, `hidden`, or `role="button"`), and keep the product title in its accessible name. Tests do not match other text, so any language works. Tests read only visible cards, so hidden responsive copies do not count.
+- Use existing elements. Do not add a wrapper or change the layout for tests. An element has only one `data-testid`, so if the grid already has another test ID, put `product-results` on an existing parent.
 
 ## The cart contract
 
@@ -84,6 +100,18 @@ Add the IDs to the elements the page already renders:
 <button data-testid="product-option-value" type="button" aria-pressed="false" disabled>Large</button>
 
 <button data-testid="product-add-to-cart" type="submit">Add to cart</button>
+
+<!-- Collection or search results. Recommendations elsewhere on the page do not get product-results. -->
+<div data-testid="product-results">
+  <ul>
+    <li>
+      <article aria-label="Classic Tee">
+        <img src="/classic-tee.jpg" alt="Classic Tee" />
+        <h3><a data-testid="product-card" href="/products/classic-tee">Classic Tee</a></h3>
+      </article>
+    </li>
+  </ul>
+</div>
 
 <!-- Header. -->
 <button data-testid="cart-trigger" type="button" aria-label="Cart, 1 item" aria-controls="cart-drawer" aria-haspopup="dialog">…</button>
@@ -164,7 +192,21 @@ test("selects a variant and adds it to the cart", async ({ page }) => {
   await line.getByTestId("cart-line-remove").click();
   await expect(line).toHaveCount(0);
 });
+
+test("shows a product in the collection results", async ({ page }) => {
+  await page.goto("/collections/tees");
+
+  // Find cards only inside the results. Narrow by href, then check the link role and name.
+  const card = page
+    .getByTestId("product-results")
+    .getByTestId("product-card")
+    .filter({ visible: true })
+    .and(page.locator('[href$="/products/classic-tee"]'));
+  await expect(card.and(page.getByRole("link", { name: /Classic Tee/i }))).toBeVisible();
+});
 ```
+
+- Scope `product-card` to `product-results`, because recommendations can render product cards on the same page. Count results by unique product `href`, not by card elements.
 
 - Scope `cart-checkout` to `cart-page`, because the drawer can render its own checkout link.
 - Scope `cart-line` to `cart-page` or `cart-drawer`. Do not use `getByRole("main")` or `getByRole("dialog")`, because the page can render both cart views at the same time. Narrow lines by product title, not by `.nth()`, and do not use `.first()` to hide more than one match.
@@ -180,6 +222,8 @@ test("selects a variant and adds it to the cart", async ({ page }) => {
 - [ ] The selected option has `aria-current="true"` (link) or `aria-pressed="true"` (button)
 - [ ] Option values for combinations that do not exist are buttons with native `disabled`
 - [ ] Exactly one `<button>` on the page has `data-testid="product-add-to-cart"`, with native `disabled` or `aria-disabled="true"` when the selection cannot be added
+- [ ] On each collection and search page that shows results, exactly one existing element has `data-testid="product-results"`, and recommendations and predictive search do not
+- [ ] The primary product link of each result is a visible native `<a href>` to the product page with `data-testid="product-card"`, and its accessible name contains the product title
 - [ ] Exactly one element on `/cart` has `data-testid="cart-page"`, and the drawer is not inside it
 - [ ] Exactly one native `<dialog>` has `data-testid="cart-drawer"`
 - [ ] Each populated cart view has one visible native `<a href>` checkout link with a non-empty accessible name and `data-testid="cart-checkout"`, and the cart page has exactly one

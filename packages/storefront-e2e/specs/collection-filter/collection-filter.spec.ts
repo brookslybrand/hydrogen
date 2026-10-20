@@ -1,15 +1,15 @@
 import type { Locator, Page } from "@playwright/test";
 
+import { StorefrontContractError } from "../../src/contract";
+import {
+  requireVisibleProductCardPaths,
+  type ProductResultsOptions,
+} from "../../src/product-results";
 import { expect, test } from "./config";
 
-const MAX_ANCHOR_INSPECTION_PROBES = 200;
 const MAX_FILTER_CONTROL_PROBES = 20;
-const MAX_LINK_DISCOVERY_PROBES = 40;
-
-type ProductCandidate = {
-  readonly href: string;
-  readonly title: string;
-};
+// Short wait for the results root on each poll, so the poll keeps its rhythm.
+const RESULTS_POLL_TIMEOUT_MS = 1_000;
 
 type FilterCandidate = {
   readonly control: Locator;
@@ -21,9 +21,10 @@ test("collection filter narrows products", async ({ data, page }) => {
   const firstCollection = data.collections[0];
   if (firstCollection === undefined) throw new Error("No filterable collection found");
 
-  await page.goto(data.paths.collection(firstCollection.handle));
+  const collectionPath = data.paths.collection(firstCollection.handle);
+  await page.goto(collectionPath);
 
-  const initialResultCount = await uniqueProductLinkCount(page, data.paths.product);
+  const initialResultCount = await uniqueProductCardCount(page, collectionPath, data.paths.product);
   const filter = await findUsableFilter(page, initialResultCount);
   test.skip(filter === null, "No visible collection filter narrows the initial product results");
 
@@ -35,14 +36,20 @@ test("collection filter narrows products", async ({ data, page }) => {
 
   await applyFiltersIfNeeded(page);
   await expect(page).not.toHaveURL(beforeUrl);
+  // The results can be briefly missing or empty while they update. A broken
+  // results contract still fails below with its own error.
   await expect
     .poll(async () => {
-      const resultCount = await uniqueProductLinkCount(page, data.paths.product);
+      const resultCount = await uniqueProductCardCount(page, collectionPath, data.paths.product, {
+        timeout: RESULTS_POLL_TIMEOUT_MS,
+      }).catch(() => 0);
       return resultCount > 0 && resultCount < initialResultCount;
     })
-    .toBe(true);
+    .toBe(true)
+    .catch(() => undefined);
 
-  const resultCount = await uniqueProductLinkCount(page, data.paths.product);
+  const resultCount = await uniqueProductCardCount(page, collectionPath, data.paths.product);
+  expect(resultCount).toBeLessThan(initialResultCount);
   if (filter.expectedResultCount !== null) {
     expect(resultCount).toBeLessThanOrEqual(filter.expectedResultCount);
   }
@@ -56,10 +63,119 @@ test("collection filter narrows products", async ({ data, page }) => {
   await expect(filter.control).not.toBeChecked();
 });
 
-async function uniqueProductLinkCount(page: Page, productPathSegment: string): Promise<number> {
-  const links = await visibleLinksWithPath(page, productPathSegment);
-  const uniqueProductUrls = new Set(links.map((link) => new URL(link.href).pathname));
-  return uniqueProductUrls.size;
+test.describe("product result count helpers", () => {
+  const collectionPath = "/collections/all";
+  const options: ProductResultsOptions = { timeout: 200 };
+
+  test("counts unique visible product card URLs inside the results only", async ({ page }) => {
+    // Unmarked product links, recommendation cards outside the results, hidden
+    // cards (including invalid hidden copies), and repeated URLs do not add to
+    // the count.
+    await openFixture(
+      page,
+      `<nav><a href="/products/nav">Nav</a></nav>
+      <aside>${productCardHtml("/products/recommended")}</aside>
+      <div data-testid="product-results"><ul>
+        <li>${productCardHtml("/products/shirt")}<a href="/products/shirt-image">Image</a></li>
+        <li>${productCardHtml("/products/shirt?variant=1")}</li>
+        <li>${productCardHtml("/products/hat")}</li>
+        <li>${productCardHtml("https://storefront.test/products/hat")}</li>
+        <li>${productCardHtml("/products/hidden", "hidden")}</li>
+        <li>${productCardHtml("/products/invisible", 'style="visibility:hidden"')}</li>
+        <li style="display:none">${productCardHtml("/products/collapsed")}</li>
+        <li style="visibility:hidden">${productCardHtml("/products/responsive-copy")}</li>
+        <li><div data-testid="product-card" hidden><a href="/products/wrapper">Wrapper</a></div></li>
+        <li>${productCardHtml("/pages/hidden", 'style="visibility:hidden"')}</li>
+      </ul></div>`,
+    );
+
+    await expect(uniqueProductCardCount(page, collectionPath, "/products/", options)).resolves.toBe(
+      2,
+    );
+  });
+
+  test("fails clearly for a missing or duplicate results root or no visible cards", async ({
+    page,
+  }) => {
+    const cases: [string, RegExp][] = [
+      [
+        `<ul>${productCardHtml("/products/shirt")}</ul>`,
+        /exactly one element with data-testid="product-results".*Found 0\./,
+      ],
+      [
+        `<div data-testid="product-results">${productCardHtml("/products/shirt")}</div><section data-testid="product-results"></section>`,
+        /exactly one element with data-testid="product-results".*Found 2\./,
+      ],
+      [
+        `<div data-testid="product-results"><a href="/products/shirt">Shirt</a></div>`,
+        /contains at least one visible element with data-testid="product-card"\. Found 0\./,
+      ],
+      [
+        `<div data-testid="product-results">${productCardHtml("/products/shirt", "hidden")}</div>`,
+        /contains at least one visible element with data-testid="product-card"\. Found 0\./,
+      ],
+      [
+        `<div data-testid="product-results">${productCardHtml("/products/shirt", 'style="visibility:hidden"')}</div>`,
+        /contains at least one visible element with data-testid="product-card"\. Found 0\./,
+      ],
+    ];
+
+    for (const [html, message] of cases) {
+      await test.step(html, async () => {
+        await openFixture(page, html);
+        await expectContractError(
+          uniqueProductCardCount(page, collectionPath, "/products/", options),
+          message,
+        );
+      });
+    }
+  });
+
+  test("fails clearly for a wrapper card or a card that links to another page", async ({
+    page,
+  }) => {
+    const cases: [string, RegExp][] = [
+      [
+        `<div data-testid="product-card"><a href="/products/shirt">Shirt</a></div>`,
+        /native <a> product link of a result\. Found <div>\./,
+      ],
+      [productCardHtml("/collections/shirts"), /product URL that contains \/products\/\./],
+      [`<a data-testid="product-card">Shirt</a>`, /product URL that contains \/products\/\./],
+    ];
+
+    for (const [html, message] of cases) {
+      await test.step(html, async () => {
+        // A valid visible card comes first, so the invalid card must not be skipped.
+        await openFixture(
+          page,
+          `<div data-testid="product-results">${productCardHtml("/products/hat")}${html}</div>`,
+        );
+        await expectContractError(
+          uniqueProductCardCount(page, collectionPath, "/products/", options),
+          message,
+        );
+      });
+    }
+  });
+});
+
+/**
+ * Counts the unique product URL paths of the visible product card links in the
+ * single results root. Zero visible cards is a contract failure.
+ */
+async function uniqueProductCardCount(
+  page: Page,
+  collectionPath: string,
+  productPathSegment: string,
+  options: ProductResultsOptions = {},
+): Promise<number> {
+  const paths = await requireVisibleProductCardPaths(
+    page,
+    collectionPath,
+    productPathSegment,
+    options,
+  );
+  return paths.size;
 }
 
 async function applyFiltersIfNeeded(page: Page): Promise<void> {
@@ -75,38 +191,6 @@ async function selectFilter(filter: FilterCandidate): Promise<void> {
   }
 
   await filter.control.check();
-}
-
-async function visibleLinksWithPath(page: Page, pathSegment: string): Promise<ProductCandidate[]> {
-  return page.evaluate(
-    ({ currentUrl, maxAnchorInspectionProbes, maxLinkDiscoveryProbes, targetPathSegment }) => {
-      const links = [...document.querySelectorAll<HTMLAnchorElement>("a[href]")].slice(
-        0,
-        maxAnchorInspectionProbes,
-      );
-      const candidates: ProductCandidate[] = [];
-
-      for (const link of links) {
-        if (candidates.length >= maxLinkDiscoveryProbes) break;
-
-        const url = new URL(link.href, currentUrl);
-        const rect = link.getBoundingClientRect();
-        const isVisible = rect.width > 0 && rect.height > 0;
-        if (!isVisible || !url.pathname.includes(targetPathSegment)) continue;
-
-        const title = link.textContent?.replace(/\s+/g, " ").trim() ?? "";
-        candidates.push({ href: url.toString(), title });
-      }
-
-      return candidates;
-    },
-    {
-      currentUrl: page.url(),
-      maxAnchorInspectionProbes: MAX_ANCHOR_INSPECTION_PROBES,
-      maxLinkDiscoveryProbes: MAX_LINK_DISCOVERY_PROBES,
-      targetPathSegment: pathSegment,
-    },
-  );
 }
 
 async function findUsableFilter(
@@ -158,4 +242,31 @@ function parseFilterCount(label: string): number | null {
 
   const count = Number.parseInt(match[1], 10);
   return Number.isFinite(count) ? count : null;
+}
+
+async function expectContractError(promise: Promise<unknown>, message: RegExp): Promise<void> {
+  const error = await promise.then(
+    () => null,
+    (reason: unknown) => reason,
+  );
+  expect(error).toBeInstanceOf(StorefrontContractError);
+  expect(String(error)).toMatch(message);
+}
+
+/** Fake storefront origin for helper fixtures. No request leaves the browser. */
+const STOREFRONT_ORIGIN = "https://storefront.test";
+
+/** Serves `body` as a collection page so relative product links have an HTTP base. */
+async function openFixture(page: Page, body: string): Promise<void> {
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+  await page.route("**/*", (route) => route.abort());
+  await page.route(`${STOREFRONT_ORIGIN}/collections/all`, (route) =>
+    route.fulfill({ body: `<!doctype html>${body}`, contentType: "text/html", status: 200 }),
+  );
+  await page.goto(`${STOREFRONT_ORIGIN}/collections/all`);
+}
+
+/** A real product card link for helper fixtures. Decoy links have no test ID. */
+function productCardHtml(href: string, attributes = ""): string {
+  return `<a data-testid="product-card" href="${href}" ${attributes}>Product</a>`;
 }
