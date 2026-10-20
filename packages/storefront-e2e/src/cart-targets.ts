@@ -6,6 +6,7 @@ import { createContractError, type ContractCapability } from "./contract";
 export const CART_PAGE_TEST_ID = "cart-page";
 export const CART_DRAWER_TEST_ID = "cart-drawer";
 export const CART_TRIGGER_TEST_ID = "cart-trigger";
+export const CART_LINE_TEST_ID = "cart-line";
 
 type SingleCartTarget = {
   readonly capability: ContractCapability;
@@ -66,6 +67,40 @@ export async function requireCartTrigger(
   options: CartTargetOptions = {},
 ): Promise<Locator> {
   return requireSingleCartTarget(page, CART_TRIGGER_TARGET, routePath, options);
+}
+
+/**
+ * Returns the single cart line in `surface` (the cart page or the cart drawer)
+ * that contains `productTitle`. Lines in other surfaces do not count. A missing
+ * or ambiguous match is a contract failure.
+ */
+export async function requireCartLine(
+  surface: Locator,
+  surfaceDescription: string,
+  productTitle: string,
+  routePath: string,
+  { timeout }: CartTargetOptions = {},
+): Promise<Locator> {
+  const line = surface.getByTestId(CART_LINE_TEST_ID).filter({ hasText: productTitle });
+  const attribute = `data-testid="${CART_LINE_TEST_ID}"`;
+
+  try {
+    await expect(line).toHaveCount(1, { timeout });
+  } catch {
+    const count = await line.count();
+    throw createContractError({
+      capability: "cart-line",
+      routePath,
+      expectation: `The ${surfaceDescription} renders exactly one element with ${attribute} that contains "${productTitle}". Found ${count}.`,
+      likelyFix:
+        count === 0
+          ? `Add ${attribute} to the element that holds each cart line and its controls.`
+          : `Keep ${attribute} only on the element that holds each cart line. Do not nest it or put it on other elements.`,
+      docsAnchor: "#cart-test-ids",
+    });
+  }
+
+  return line;
 }
 
 async function requireSingleCartTarget(

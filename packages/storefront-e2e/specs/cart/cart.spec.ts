@@ -2,6 +2,7 @@ import { expect, type Locator, type Page } from "@playwright/test";
 
 import {
   requireCartDrawer,
+  requireCartLine,
   requireCartPage,
   requireCartTrigger,
   type CartTargetOptions,
@@ -106,18 +107,19 @@ test.describe("cart target helpers", () => {
   const productPath = "/products/shirt";
   const cartPath = "/cart";
   const options: CartTargetOptions = { timeout: 200 };
-  const drawerHtml = `<dialog id="drawer" data-testid="cart-drawer"><ul><li>Shirt</li></ul></dialog>`;
+  const drawerHtml = `<dialog id="drawer" data-testid="cart-drawer"><ul>${cartLineHtml("Shirt")}</ul></dialog>`;
   const decoyCartButtonHtml = `<button type="button" onclick="window.decoyClicked = true">Cart</button>`;
+  const triggerHtml = `<button type="button" data-testid="cart-trigger" onclick="window.triggerClicked = true; document.getElementById('drawer').showModal()">Cart</button>`;
 
   test("scopes cart page and drawer lines by test ID, not by landmark or dialog role", async ({
     page,
   }) => {
     // Decoys come first, so an unscoped first() match would find them.
     await page.setContent(`
-      <main><ul><li>Shirt decoy main</li></ul></main>
-      <dialog open><ul><li>Shirt decoy dialog</li></ul></dialog>
-      <dialog open data-testid="cart-drawer"><ul><li>Shirt drawer line</li></ul></dialog>
-      <div data-testid="cart-page"><ul><li>Shirt page line</li></ul></div>`);
+      <main><ul>${cartLineHtml("Shirt decoy main")}</ul></main>
+      <dialog open><ul>${cartLineHtml("Shirt decoy dialog")}</ul></dialog>
+      <dialog open data-testid="cart-drawer"><ul>${cartLineHtml("Shirt drawer line")}</ul></dialog>
+      <div data-testid="cart-page"><ul>${cartLineHtml("Shirt page line")}</ul></div>`);
 
     await expect(await cartLineFor(page, "Shirt", cartPath, options)).toHaveText("Shirt page line");
     await expect(await cartOverlayLineFor(page, "Shirt", productPath, options)).toHaveText(
@@ -125,16 +127,84 @@ test.describe("cart target helpers", () => {
     );
   });
 
+  test("ignores list items without the cart line test ID", async ({ page }) => {
+    await page.setContent(`
+      <dialog open data-testid="cart-drawer"><ul>
+        <li>Shirt recommendation</li>
+        ${cartLineHtml("Shirt drawer line")}
+      </ul></dialog>
+      <div data-testid="cart-page"><ul>
+        <li>Shirt recommendation</li>
+        ${cartLineHtml("Shirt page line")}
+      </ul></div>`);
+
+    await expect(await cartLineFor(page, "Shirt", cartPath, options)).toHaveText("Shirt page line");
+    await expect(await cartOverlayLineFor(page, "Shirt", productPath, options)).toHaveText(
+      "Shirt drawer line",
+    );
+  });
+
+  test("allows the same product line in both the cart page and the drawer", async ({ page }) => {
+    await page.setContent(`
+      <div data-testid="cart-page"><ul>${cartLineHtml("Shirt page line")}</ul></div>
+      <dialog open data-testid="cart-drawer"><ul>${cartLineHtml("Shirt drawer line")}</ul></dialog>`);
+
+    await expect(await cartLineFor(page, "Shirt", cartPath, options)).toHaveText("Shirt page line");
+    await expect(await openCartOverlayFor(page, "Shirt", productPath, options)).toHaveText(
+      "Shirt drawer line",
+    );
+  });
+
+  test("fails clearly for a missing or ambiguous line in the cart page", async ({ page }) => {
+    await page.setContent(
+      `<div data-testid="cart-page"><ul><li>Shirt</li>${cartLineHtml("Hat")}</ul></div>`,
+    );
+    await expectContractError(
+      cartLineFor(page, "Shirt", cartPath, options),
+      /cart page renders exactly one element with data-testid="cart-line" that contains "Shirt"\. Found 0\./,
+    );
+
+    await page.setContent(
+      `<div data-testid="cart-page"><ul>${cartLineHtml("Shirt")}${cartLineHtml("T-Shirt")}</ul></div>`,
+    );
+    await expectContractError(
+      cartLineFor(page, "Shirt", cartPath, options),
+      /cart page renders exactly one element with data-testid="cart-line" that contains "Shirt"\. Found 2\./,
+    );
+  });
+
+  test("fails clearly for a missing or ambiguous line in an open drawer without the trigger", async ({
+    page,
+  }) => {
+    await page.setContent(`
+      ${triggerHtml}
+      <dialog open id="drawer" data-testid="cart-drawer"><ul><li>Shirt</li>${cartLineHtml("Hat")}</ul></dialog>`);
+    await expectContractError(
+      openCartOverlayFor(page, "Shirt", productPath, options),
+      /cart drawer renders exactly one element with data-testid="cart-line" that contains "Shirt"\. Found 0\./,
+    );
+    expect(await wasTriggerClicked(page)).toBe(false);
+
+    await page.setContent(`
+      ${triggerHtml}
+      <dialog open id="drawer" data-testid="cart-drawer"><ul>${cartLineHtml("Shirt")}${cartLineHtml("Shirt")}</ul></dialog>`);
+    await expectContractError(
+      openCartOverlayFor(page, "Shirt", productPath, options),
+      /cart drawer renders exactly one element with data-testid="cart-line" that contains "Shirt"\. Found 2\./,
+    );
+    expect(await wasTriggerClicked(page)).toBe(false);
+  });
+
   test("fails clearly for a missing or duplicate cart page", async ({ page }) => {
-    await page.setContent(`<main><ul><li>Shirt</li></ul></main>`);
+    await page.setContent(`<main><ul>${cartLineHtml("Shirt")}</ul></main>`);
     await expectContractError(
       cartLineFor(page, "Shirt", cartPath, options),
       /exactly one element with data-testid="cart-page".*Found 0\./,
     );
 
     await page.setContent(`
-      <main data-testid="cart-page"><ul><li>Shirt</li></ul></main>
-      <div data-testid="cart-page"><ul><li>Shirt</li></ul></div>`);
+      <main data-testid="cart-page"><ul>${cartLineHtml("Shirt")}</ul></main>
+      <div data-testid="cart-page"><ul>${cartLineHtml("Shirt")}</ul></div>`);
     await expectContractError(
       cartLineFor(page, "Shirt", cartPath, options),
       /exactly one element with data-testid="cart-page".*Found 2\./,
@@ -142,7 +212,7 @@ test.describe("cart target helpers", () => {
   });
 
   test("fails clearly for a missing, duplicate, or non-dialog cart drawer", async ({ page }) => {
-    await page.setContent(`<dialog open><ul><li>Shirt</li></ul></dialog>`);
+    await page.setContent(`<dialog open><ul>${cartLineHtml("Shirt")}</ul></dialog>`);
     await expectContractError(
       cartOverlayLineFor(page, "Shirt", productPath, options),
       /exactly one element with data-testid="cart-drawer".*Found 0\./,
@@ -155,7 +225,7 @@ test.describe("cart target helpers", () => {
     );
 
     await page.setContent(
-      `<div data-testid="cart-drawer" role="dialog"><ul><li>Shirt</li></ul></div>`,
+      `<div data-testid="cart-drawer" role="dialog"><ul>${cartLineHtml("Shirt")}</ul></div>`,
     );
     await expectContractError(
       cartOverlayLineFor(page, "Shirt", productPath, options),
@@ -167,15 +237,13 @@ test.describe("cart target helpers", () => {
     page,
   }) => {
     await page.setContent(`
-      <button type="button" data-testid="cart-trigger" onclick="window.triggerClicked = true">
-        Cart
-      </button>
-      <dialog open data-testid="cart-drawer"><ul><li>Shirt</li></ul></dialog>`);
+      ${triggerHtml}
+      <dialog open id="drawer" data-testid="cart-drawer"><ul>${cartLineHtml("Shirt")}</ul></dialog>`);
 
-    const line = await openCartOverlayFor(page, "Shirt", productPath, options);
+    const cartLine = await openCartOverlayFor(page, "Shirt", productPath, options);
 
-    await expect(line).toBeVisible();
-    expect(await page.evaluate(() => "triggerClicked" in window)).toBe(false);
+    await expect(cartLine).toBeVisible();
+    expect(await wasTriggerClicked(page)).toBe(false);
   });
 
   test("opens a closed drawer with the cart trigger and ignores decoy buttons", async ({
@@ -190,12 +258,29 @@ test.describe("cart target helpers", () => {
       await test.step(trigger, async () => {
         await page.setContent(`${decoyCartButtonHtml}${trigger}${drawerHtml}`);
 
-        const line = await openCartOverlayFor(page, "Shirt", productPath, options);
+        const cartLine = await openCartOverlayFor(page, "Shirt", productPath, options);
 
-        await expect(line).toBeVisible();
+        await expect(cartLine).toBeVisible();
         expect(await page.evaluate(() => "decoyClicked" in window)).toBe(false);
       });
     }
+  });
+
+  test("opens a closed drawer that renders its lines only after the trigger", async ({ page }) => {
+    // The drawer is empty until the trigger opens it, then adds the line later.
+    await page.setContent(`
+      <button type="button" data-testid="cart-trigger" onclick="
+        const drawer = document.getElementById('drawer');
+        drawer.showModal();
+        setTimeout(() => {
+          drawer.innerHTML = '<ul><li data-testid=&quot;cart-line&quot;>Shirt</li></ul>';
+        }, 50);
+      ">Cart</button>
+      <dialog id="drawer" data-testid="cart-drawer"></dialog>`);
+
+    const cartLine = await openCartOverlayFor(page, "Shirt", productPath, options);
+
+    await expect(cartLine).toBeVisible();
   });
 
   test("fails clearly for a missing, duplicate, or non-control cart trigger", async ({ page }) => {
@@ -383,12 +468,13 @@ async function cartOverlayLineFor(
   options: CartTargetOptions = CART_TARGET_OPTIONS,
 ): Promise<Locator> {
   const drawer = await requireCartDrawer(page, routePath, options);
-  return drawer.getByRole("listitem").filter({ hasText: productTitle }).first();
+  return requireCartLine(drawer, "cart drawer", productTitle, routePath, options);
 }
 
 /**
  * Returns the drawer line. Uses the cart trigger only when the drawer did not
- * open by itself after Add to cart.
+ * open by itself after Add to cart. The check reads the native dialog state, not
+ * the line, so a drawer that renders its lines only when it opens still works.
  */
 async function openCartOverlayFor(
   page: Page,
@@ -396,12 +482,14 @@ async function openCartOverlayFor(
   routePath: string,
   options: CartTargetOptions = CART_TARGET_OPTIONS,
 ): Promise<Locator> {
-  const line = await cartOverlayLineFor(page, productTitle, routePath, options);
-  if (await line.isVisible().catch(() => false)) return line;
+  const drawer = await requireCartDrawer(page, routePath, options);
+  const isOpen = await drawer.evaluate((node) => node instanceof HTMLDialogElement && node.open);
+  if (!isOpen) {
+    const trigger = await requireCartTrigger(page, routePath, options);
+    await trigger.click();
+  }
 
-  const trigger = await requireCartTrigger(page, routePath, options);
-  await trigger.click();
-  return line;
+  return requireCartLine(drawer, "cart drawer", productTitle, routePath, options);
 }
 
 async function expectCartTotalsStatus(
@@ -432,7 +520,7 @@ async function cartLineFor(
   options: CartTargetOptions = CART_TARGET_OPTIONS,
 ): Promise<Locator> {
   const cartPage = await requireCartPage(page, cartPath, options);
-  return cartPage.getByRole("listitem").filter({ hasText: productTitle }).first();
+  return requireCartLine(cartPage, "cart page", productTitle, cartPath, options);
 }
 
 async function quantityInputFor(line: Locator, cartPath: string): Promise<Locator> {
@@ -477,6 +565,15 @@ async function lineButton(
     likelyFix: "Add accessible names to cart line quantity and remove controls.",
     docsAnchor: "#cart-line-items",
   });
+}
+
+/** A real cart line for helper fixtures. Decoy list items have no test ID. */
+function cartLineHtml(text: string): string {
+  return `<li data-testid="cart-line">${text}</li>`;
+}
+
+async function wasTriggerClicked(page: Page): Promise<boolean> {
+  return page.evaluate(() => "triggerClicked" in window);
 }
 
 async function expectContractError(promise: Promise<unknown>, message: RegExp): Promise<void> {
