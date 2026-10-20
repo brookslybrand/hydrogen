@@ -14,7 +14,6 @@ import { test, type CartTestProduct } from "./config";
 
 const CART_SETTLE_TIMEOUT_MS = 15_000;
 const CART_TARGET_OPTIONS: CartTargetOptions = { timeout: CART_SETTLE_TIMEOUT_MS };
-const REMOVE_CONTROL_NAME = /remove/i;
 const CART_ENDPOINT_PATTERN = "**/api/cart";
 const CART_TOTALS_UPDATING_TEXT = "Updating cart totals";
 const CART_TOTALS_UPDATED_TEXT = "Cart totals updated";
@@ -396,6 +395,58 @@ test.describe("cart target helpers", () => {
       });
     }
   });
+
+  test("removes only the selected line with its test ID remove button", async ({ page }) => {
+    // The other line and the drawer line also have real remove buttons. The
+    // English-named decoy comes before the localized real button.
+    await page.setContent(`
+      <div data-testid="cart-page"><ul>
+        ${removableLineHtml("Hat")}
+        <li data-testid="cart-line">
+          Shirt
+          <button type="button" onclick="window.decoyClicked = true">Remove</button>
+          <button type="button" data-testid="cart-line-remove" aria-label="Entfernen" onclick="${REMOVE_LINE_SCRIPT}">×</button>
+        </li>
+      </ul></div>
+      <dialog open data-testid="cart-drawer"><ul>${removableLineHtml("Shirt")}</ul></dialog>`);
+    const line = await cartLineFor(page, "Shirt", cartPath, options);
+
+    await removeLine(line, cartPath, options);
+
+    const cartPage = page.getByTestId("cart-page");
+    await expect(cartPage.getByTestId("cart-line")).toHaveCount(1);
+    await expect(cartPage.getByTestId("cart-line")).toContainText("Hat");
+    await expect(page.getByTestId("cart-drawer").getByTestId("cart-line")).toContainText("Shirt");
+    expect(await page.evaluate(() => "decoyClicked" in window)).toBe(false);
+  });
+
+  test("fails clearly for a missing, duplicate, or non-button remove control", async ({ page }) => {
+    const remove = `<button type="button" data-testid="cart-line-remove">Remove</button>`;
+    const cases: [string, RegExp][] = [
+      [
+        `<button type="button" aria-label="Remove Shirt">Remove</button>`,
+        /cart line renders exactly one element with data-testid="cart-line-remove" \(the remove button\)\. Found 0\./,
+      ],
+      [`${remove}${remove}`, /data-testid="cart-line-remove".*Found 2\./],
+      [
+        `<a href="#" data-testid="cart-line-remove">Remove</a>`,
+        /native <button> remove button\. Found <a>\./,
+      ],
+    ];
+
+    for (const [controls, message] of cases) {
+      await test.step(controls, async () => {
+        // The other line has a real remove button. It must not count for Shirt.
+        await page.setContent(`<div data-testid="cart-page"><ul>
+          ${removableLineHtml("Hat")}
+          <li data-testid="cart-line">Shirt ${controls}</li>
+        </ul></div>`);
+        const line = await cartLineFor(page, "Shirt", cartPath, options);
+        await expectContractError(removeLine(line, cartPath, options), message);
+        await expect(page.getByTestId("cart-line")).toHaveCount(2);
+      });
+    }
+  });
 });
 
 function createRequestGate(): { wait: Promise<void>; release: () => void } {
@@ -533,15 +584,19 @@ async function stepCartLineQuantity(
 
 async function removeCartLine(page: Page, expectation: CartExpectation): Promise<void> {
   const line = await expectCartLine(page, expectation);
-  const remove = await lineButton(
-    line,
-    REMOVE_CONTROL_NAME,
-    "remove line item",
-    expectation.cartPath,
-  );
+  await removeLine(line, expectation.cartPath);
+}
+
+/** Clicks the line's remove button and waits for the line to go away. */
+async function removeLine(
+  line: Locator,
+  cartPath: string,
+  options: CartTargetOptions = CART_TARGET_OPTIONS,
+): Promise<void> {
+  const remove = await requireCartLineControl(line, "remove", cartPath, options);
 
   await remove.click();
-  await expect(line).not.toBeVisible({ timeout: CART_SETTLE_TIMEOUT_MS });
+  await expect(line).not.toBeVisible({ timeout: options.timeout });
 }
 
 async function cartOverlayLineFor(
@@ -624,24 +679,6 @@ function shouldAssertVariant(variantLabel: string): boolean {
   return variantLabel !== "" && variantLabel.toLowerCase() !== "default title";
 }
 
-async function lineButton(
-  line: Locator,
-  name: RegExp,
-  purpose: string,
-  cartPath: string,
-): Promise<Locator> {
-  const button = line.getByRole("button", { name }).first();
-  if (await button.isVisible().catch(() => false)) return button;
-
-  throw createContractError({
-    capability: "cart-line",
-    routePath: cartPath,
-    expectation: "Cart line item exposes a visible button for " + purpose + ".",
-    likelyFix: "Add accessible names to cart line quantity and remove controls.",
-    docsAnchor: "#cart-line-items",
-  });
-}
-
 /** A real cart line for helper fixtures. Decoy list items have no test ID. */
 function cartLineHtml(text: string): string {
   return `<li data-testid="cart-line">${text}</li>`;
@@ -667,6 +704,14 @@ function quantityLineHtml(title: string, inputType: "text" | "number", quantity:
 /** Inline click handler that changes the line's quantity input by `delta`. */
 function quantityStepScript(delta: number): string {
   return `const input = this.closest('[data-testid=cart-line]').querySelector('[data-testid=cart-line-quantity]'); input.value = String(Number(input.value) + ${delta});`;
+}
+
+/** Inline click handler that removes the button's cart line. */
+const REMOVE_LINE_SCRIPT = "this.closest('[data-testid=cart-line]').remove()";
+
+/** A helper fixture line with a working remove button. */
+function removableLineHtml(title: string): string {
+  return `<li data-testid="cart-line">${title} <button type="button" data-testid="cart-line-remove" aria-label="Remove ${title}" onclick="${REMOVE_LINE_SCRIPT}">×</button></li>`;
 }
 
 async function wasTriggerClicked(page: Page): Promise<boolean> {

@@ -45,11 +45,11 @@ Rules:
 - Test IDs do not replace accessibility. The title stays the page heading, each control keeps an accessible name, and state stays in the attributes above.
 - The test IDs do not add a server-rendering or hydration requirement. They go on the same elements the page already renders. Where the page supports server rendering and no-JavaScript selection, the IDs are on the server-rendered elements.
 
-Scope: the product, product variant, cart, and checkout groups use these IDs to find the product title, option values, and add to cart button. The cart group also uses the cart test IDs below. The suite still finds all other UI by role, label, and text, as the sections below describe. This includes product results, collection filters, search, the cart line remove control, the cart totals status, the cart lines that the checkout group reads, and the checkout link. The storefront can have other test IDs for its own tests. The suite does not read them.
+Scope: the product, product variant, cart, and checkout groups use these IDs to find the product title, option values, and add to cart button. The cart group also uses the cart test IDs below. The suite still finds all other UI by role, label, and text, as the sections below describe. This includes product results, collection filters, search, the cart totals status, the cart lines that the checkout group reads, and the checkout link. The storefront can have other test IDs for its own tests. The suite does not read them.
 
 ## Cart Test IDs
 
-The cart group finds seven cart elements with standard `data-testid` attributes and Playwright `getByTestId`:
+The cart group finds eight cart elements with standard `data-testid` attributes and Playwright `getByTestId`:
 
 | Test ID | Put it on | Count | Evidence the suite reads |
 | --- | --- | --- | --- |
@@ -60,6 +60,7 @@ The cart group finds seven cart elements with standard `data-testid` attributes 
 | `cart-line-quantity` | The editable quantity input of each line, a native `<input>` (for example `type="text"` or `type="number"`) | Exactly one in each line | The native input value, which the suite fills and reads as the quantity |
 | `cart-line-increase` | The increase quantity control of each line, a native `<button>` | Exactly one in each line | The click |
 | `cart-line-decrease` | The decrease quantity control of each line, a native `<button>` | Exactly one in each line | The click |
+| `cart-line-remove` | The remove control of each line, a native `<button>` | Exactly one in each line | The click, after which the line must go away |
 
 A missing or duplicate `cart-page`, `cart-drawer`, or `cart-trigger` fails the test with a contract error. A `cart-drawer` that is not a native `<dialog>`, or a `cart-trigger` that is not a native `<button>` or `<a>`, also fails.
 
@@ -71,11 +72,11 @@ Rules:
 - Put `cart-line` on one element per line that contains the line's title, variant text, quantity input, and line controls. Do not nest it, and do not put it on other list items, such as recommendations. Any element works; the ID does not add an HTML tag requirement.
 - Put `cart-trigger` only on a control that opens the drawer. A link that only goes to `/cart`, for example a fallback link before hydration or on the cart page, is not a trigger. Do not give it the ID.
 - Do not add new test-only attributes for the suite. State and accessible names stay in native attributes and ARIA, for example `aria-controls`, `aria-haspopup`, and `aria-expanded` on the trigger. Existing app attributes can stay.
-- The suite finds `cart-line-quantity`, `cart-line-increase`, and `cart-line-decrease` only inside the selected `cart-line`. Each one must be the single visible native element of its kind in that line. A missing, duplicate, hidden, or non-native target fails with a contract error. Controls in other lines do not count.
-- The native input value is the quantity. Do not add test-only attributes for the quantity or for pending state. Keep the existing native `disabled` state and accessible names on the buttons.
+- The suite finds `cart-line-quantity`, `cart-line-increase`, `cart-line-decrease`, and `cart-line-remove` only inside the selected `cart-line`. Each one must be the single visible native element of its kind in that line. A missing, duplicate, hidden, or non-native target fails with a contract error. Controls in other lines do not count.
+- The native input value is the quantity. Do not add test-only attributes for the quantity or for pending state. Keep the existing native `disabled` state and accessible names on the buttons, including the remove button.
 - Like the product test IDs, these IDs do not add a server-rendering or hydration requirement.
 
-Scope: the cart group uses these IDs only to find the cart page, the cart drawer, the trigger, the cart lines, and the line quantity controls. It finds the quantity input and the increase and decrease buttons by test ID inside the line. It still finds the remove control by role and name. It finds the cart totals status by role and text. The checkout group does not use the cart test IDs.
+Scope: the cart group uses these IDs only to find the cart page, the cart drawer, the trigger, the cart lines, and the line quantity and remove controls. It finds the quantity input and the increase, decrease, and remove buttons by test ID inside the line. It finds the cart totals status by role and text. The checkout group does not use the cart test IDs.
 
 ## Product Results
 
@@ -129,13 +130,13 @@ Each line must expose:
 - A visible quantity input with `data-testid="cart-line-quantity"`
 - A visible increase button with `data-testid="cart-line-increase"`
 - A visible decrease button with `data-testid="cart-line-decrease"`
-- A visible remove control named Remove
+- A visible remove button with `data-testid="cart-line-remove"`
 
-The increase and decrease buttons keep an accessible name, but the suite does not match their name. It reads the result from the native value of the quantity input.
+The increase, decrease, and remove buttons keep an accessible name, but the suite does not match their name. It reads the quantity result from the native value of the quantity input. After remove, it waits for the line to go away.
 
 Cart totals must expose a `role="status"` region that says `Updating cart totals` while cart totals are stale, then `Cart totals updated` after mutation settlement. Do not announce `Cart totals updated` on initial idle render before a mutation cycle. The region may be visually hidden if it remains available to assistive technology.
 
-The suite finds the remove control inside the cart line by role and name. It finds the totals status anywhere on the page by role and text.
+The suite finds the totals status anywhere on the page by role and text.
 
 ## Checkout Handoff
 
@@ -167,4 +168,4 @@ Operational expectations:
 
 When the storefront contract changes, update the relevant spec matcher, shared helper, and this document together.
 
-The suite reads test IDs only for the product title, option values, add to cart button, cart page, cart drawer, cart trigger, cart lines, and cart line quantity controls. It finds all other UI by semantic roles and label strings, including the English cart totals status text. Before the suite reads a new test ID, add it to this document.
+The suite reads test IDs only for the product title, option values, add to cart button, cart page, cart drawer, cart trigger, cart lines, and cart line quantity and remove controls. It finds all other UI by semantic roles and label strings, including the English cart totals status text. Before the suite reads a new test ID, add it to this document.

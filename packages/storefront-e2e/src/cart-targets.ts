@@ -10,6 +10,7 @@ export const CART_LINE_TEST_ID = "cart-line";
 export const CART_LINE_QUANTITY_TEST_ID = "cart-line-quantity";
 export const CART_LINE_INCREASE_TEST_ID = "cart-line-increase";
 export const CART_LINE_DECREASE_TEST_ID = "cart-line-decrease";
+export const CART_LINE_REMOVE_TEST_ID = "cart-line-remove";
 
 type SingleCartTarget = {
   readonly capability: ContractCapability;
@@ -63,6 +64,12 @@ const CART_LINE_CONTROL_TARGETS = {
     description: "decrease quantity button",
     elements: ["button"],
     testId: CART_LINE_DECREASE_TEST_ID,
+  },
+  remove: {
+    capability: "cart-line",
+    description: "remove button",
+    elements: ["button"],
+    testId: CART_LINE_REMOVE_TEST_ID,
   },
 } as const satisfies Record<string, SingleCartTarget>;
 
@@ -130,8 +137,8 @@ export async function requireCartLine(
 }
 
 /**
- * Returns the single visible quantity <input>, increase <button>, or decrease
- * <button> inside `line`. The native input value stays the quantity.
+ * Returns the single visible quantity <input>, or increase, decrease, or remove
+ * <button>, inside `line`. The native input value stays the quantity.
  */
 export async function requireCartLineControl(
   line: Locator,

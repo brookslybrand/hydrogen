@@ -135,7 +135,7 @@ Test IDs are acceptable when they disambiguate duplicated UI that is already sem
 
 ### Portable Storefront Test IDs
 
-The portable storefront suite in `packages/storefront-e2e` runs against storefronts it does not own, so it finds three product elements and seven cart elements with `getByTestId` first:
+The portable storefront suite in `packages/storefront-e2e` runs against storefronts it does not own, so it finds three product elements and eight cart elements with `getByTestId` first:
 
 - `product-title` on the product detail `<h1>` (exactly one on the page)
 - `product-option-value` on each option value `<a>` or `<button>` (the ID repeats; narrow it by accessible name or `href`)
@@ -145,10 +145,11 @@ The portable storefront suite in `packages/storefront-e2e` runs against storefro
 - `cart-trigger` on the `<button>` or `<a>` that opens the cart drawer (exactly one when the suite clicks it; plain `/cart` links do not get it)
 - `cart-line` on each rendered cart line element (the ID repeats; scope it to `cart-page` or `cart-drawer` and narrow it by product title, expecting exactly one match)
 - `cart-line-quantity` on the line's quantity `<input>`, and `cart-line-increase` and `cart-line-decrease` on its step `<button>`s (exactly one each inside the selected `cart-line`; read the native input value)
+- `cart-line-remove` on the line's remove `<button>` (exactly one inside the selected `cart-line`)
 
 Read state from native attributes, ARIA, and content: `href`, `aria-current`, `aria-pressed`, native `disabled` or `aria-disabled`, and the title text. Do not add new test-only attributes for state or identity. The target markup must stay accessible.
 
-This exception covers only these ten IDs in the portable suite. The cart line remove control, the cart totals status, and checkout stay role-first. All other portable-suite locators, and all other suites, stay role-first. `packages/storefront-e2e/docs/storefront-contract.md` is the source of truth. Add a new portable test ID only together with that document. Other test IDs in the target app are allowed, but the portable suite does not read them.
+This exception covers only these eleven IDs in the portable suite. The cart totals status, and checkout stay role-first. All other portable-suite locators, and all other suites, stay role-first. `packages/storefront-e2e/docs/storefront-contract.md` is the source of truth. Add a new portable test ID only together with that document. Other test IDs in the target app are allowed, but the portable suite does not read them.
 
 ### Accessibility Improvements During Test Writing
 
