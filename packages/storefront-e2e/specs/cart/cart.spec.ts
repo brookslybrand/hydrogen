@@ -1,6 +1,7 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 
 import {
+  expectCartStatus,
   requireCartDrawer,
   requireCartLine,
   requireCartLineControl,
@@ -447,6 +448,68 @@ test.describe("cart target helpers", () => {
       });
     }
   });
+
+  test("ignores status regions without the test ID, the status role, or exposure to assistive technology", async ({
+    page,
+  }) => {
+    const cases = [
+      `<span role="status">${CART_TOTALS_UPDATED_TEXT}</span>`,
+      `<span data-testid="cart-status">${CART_TOTALS_UPDATED_TEXT}</span>`,
+      `<span role="status" data-testid="cart-status" aria-hidden="true">${CART_TOTALS_UPDATED_TEXT}</span>`,
+    ];
+
+    for (const html of cases) {
+      await test.step(html, async () => {
+        await page.setContent(`
+          <div data-testid="cart-page"></div>
+          <span role="status" data-testid="cart-status">${CART_TOTALS_UPDATING_TEXT}</span>
+          ${html}`);
+        await expectContractError(
+          expectCartTotalsStatus(page, CART_TOTALS_UPDATED_TEXT, cartPath, options),
+          /data-testid="cart-status" and role="status", exposed to assistive technology, contains "Cart totals updated"/,
+        );
+      });
+    }
+  });
+
+  test("accepts one global status region outside the cart page and drawer", async ({ page }) => {
+    await page.setContent(`
+      <span role="status" data-testid="cart-status" style="${VISUALLY_HIDDEN_STYLE}">${CART_TOTALS_UPDATED_TEXT}</span>
+      <div data-testid="cart-page"><ul>${cartLineHtml("Shirt")}</ul></div>
+      <dialog data-testid="cart-drawer"><ul>${cartLineHtml("Shirt")}</ul></dialog>`);
+
+    await expectCartTotalsStatus(page, CART_TOTALS_UPDATED_TEXT, cartPath, options);
+  });
+
+  test("accepts status regions in both the cart page and the drawer", async ({ page }) => {
+    // Each view renders its own region. Either one can carry the message.
+    await page.setContent(`
+      <div data-testid="cart-page">
+        <span role="status" data-testid="cart-status" style="${VISUALLY_HIDDEN_STYLE}">${CART_TOTALS_UPDATING_TEXT}</span>
+      </div>
+      <dialog open data-testid="cart-drawer">
+        <span role="status" data-testid="cart-status" style="${VISUALLY_HIDDEN_STYLE}">${CART_TOTALS_UPDATED_TEXT}</span>
+      </dialog>`);
+
+    await expectCartTotalsStatus(page, CART_TOTALS_UPDATING_TEXT, cartPath, options);
+    await expectCartTotalsStatus(page, CART_TOTALS_UPDATED_TEXT, cartPath, options);
+  });
+
+  test("waits for the status message to change", async ({ page }) => {
+    await page.setContent(
+      `<span id="status" role="status" data-testid="cart-status">${CART_TOTALS_UPDATING_TEXT}</span>`,
+    );
+    await expectCartTotalsStatus(page, CART_TOTALS_UPDATING_TEXT, cartPath, options);
+
+    const updated = expectCartTotalsStatus(page, CART_TOTALS_UPDATED_TEXT, cartPath, {
+      timeout: 2_000,
+    });
+    await expect(page.getByTestId("cart-status")).toHaveText(CART_TOTALS_UPDATING_TEXT);
+    await page.getByTestId("cart-status").evaluate((status, message) => {
+      status.textContent = message;
+    }, CART_TOTALS_UPDATED_TEXT);
+    await updated;
+  });
 });
 
 function createRequestGate(): { wait: Promise<void>; release: () => void } {
@@ -634,21 +697,9 @@ async function expectCartTotalsStatus(
   page: Page,
   message: string,
   cartPath: string,
+  options: CartTargetOptions = CART_TARGET_OPTIONS,
 ): Promise<void> {
-  try {
-    await expect(page.getByRole("status").filter({ hasText: message }).first()).toBeAttached({
-      timeout: CART_SETTLE_TIMEOUT_MS,
-    });
-  } catch {
-    throw createContractError({
-      capability: "cart-status",
-      routePath: cartPath,
-      expectation: `Cart exposes a status region containing "${message}" while totals settle.`,
-      likelyFix:
-        'Render a role="status" region that changes from updating to updated around cart mutations.',
-      docsAnchor: "#cart-line-items",
-    });
-  }
+  await expectCartStatus(page, message, cartPath, options);
 }
 
 async function cartLineFor(
@@ -705,6 +756,10 @@ function quantityLineHtml(title: string, inputType: "text" | "number", quantity:
 function quantityStepScript(delta: number): string {
   return `const input = this.closest('[data-testid=cart-line]').querySelector('[data-testid=cart-line-quantity]'); input.value = String(Number(input.value) + ${delta});`;
 }
+
+/** Keeps a status region exposed to assistive technology but off screen, like sr-only. */
+const VISUALLY_HIDDEN_STYLE =
+  "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap";
 
 /** Inline click handler that removes the button's cart line. */
 const REMOVE_LINE_SCRIPT = "this.closest('[data-testid=cart-line]').remove()";

@@ -6,18 +6,18 @@ description: >
   Test ID contract for Hydrogen product pages and cart surfaces. Use when
   adding, reviewing, or testing data-testid attributes on the product title,
   variant option values, add to cart button, cart page, cart drawer, cart
-  trigger, cart lines, or cart line quantity and remove controls, or when
-  writing Playwright tests for product pages, add to cart, and the cart.
-  Framework agnostic.
+  trigger, cart lines, cart line quantity and remove controls, or cart status,
+  or when writing Playwright tests for product pages, add to cart, and the
+  cart. Framework agnostic.
 ---
 
 # Storefront Test IDs
 
 This is a repository skill for agents who maintain the portable storefront suite in `packages/storefront-e2e/` and the reference storefronts in `templates/react-router/`, `examples/nextjs/`, and `examples/nuxt/`. The canonical contract is `packages/storefront-e2e/docs/storefront-contract.md`. When this skill and the contract differ, the contract is correct. Also read `skills/playwright-tests/SKILL.md` for the Playwright rules of this repository.
 
-Portable storefront tests run against any storefront URL, so they cannot depend on your markup or class names. The product page exposes three standard `data-testid` attributes, and the cart exposes eight more. Tests find these elements with Playwright `getByTestId`.
+Portable storefront tests run against any storefront URL, so they cannot depend on your markup or class names. The product page exposes three standard `data-testid` attributes, and the cart exposes nine more, so there are 12 in total. Tests find these elements with Playwright `getByTestId`.
 
-Only these eleven IDs are standard. Portable tests still find other storefront UI (product cards, filters, search, cart status, checkout) by role, label, and text. Your storefront can have other test IDs for its own tests. Portable tests do not read them.
+Only these 12 IDs are standard. Portable tests still find other storefront UI (product cards, filters, search, checkout) by role, label, and text. Your storefront can have other test IDs for its own tests. Portable tests do not read them.
 
 ## The product contract
 
@@ -53,17 +53,20 @@ Rules:
 | `cart-line-increase` | The increase quantity control of each line, a native `<button>` | Exactly one in each line | The click |
 | `cart-line-decrease` | The decrease quantity control of each line, a native `<button>` | Exactly one in each line | The click |
 | `cart-line-remove` | The remove control of each line, a native `<button>` | Exactly one in each line | The click |
+| `cart-status` | The existing cart totals live region with `role="status"` | At least one. It can repeat, for example in the page and the drawer, or once for the whole page | Its text |
 
 Rules:
 
 - Keep the drawer outside the `cart-page` element. The drawer can stay in the page on `/cart`, and the IDs keep the two cart views apart.
+- Ordinary add-to-cart setup requires the drawer to open automatically and show the added line. Only the stock-limit rollback test clicks `cart-trigger` when the drawer is closed while its mutation request is held. Keep the closed `<dialog>` rendered before that click; its lines can render when it opens.
 - Put `cart-trigger` only on a control that opens the drawer. A link that only goes to `/cart`, for example a fallback link before hydration or on the cart page, is not a trigger. Do not give it the ID.
 - Keep the trigger's accessible name and ARIA, for example `aria-controls`, `aria-haspopup`, and `aria-expanded`. Do not add new test-only attributes.
 - Put `cart-line` on one element per line that holds the whole line, including its quantity input and line controls. Any element works. Do not nest it, and do not put it on other list items, such as recommendations.
 - The cart page and the drawer each render their own `cart-line` elements. In each view, one line contains a given product title.
 - Put the quantity and remove IDs on the native input and buttons inside the line, not on wrappers. Keep their accessible names and native `disabled` state. Tests do not match the button names, so a localized name such as `Entfernen` works.
 - The native input value is the quantity. Do not add test-only attributes for the quantity or pending state.
-- The cart status still uses role and text. It does not have a standard test ID.
+- Put `cart-status` on the existing `role="status"` region that announces cart totals updates. Do not move or duplicate it for tests. Keep it exposed to assistive technology; a visually hidden region is fine, an `aria-hidden` one does not count.
+- Portable tests wait for at least one `cart-status` region with `role="status"` that contains the message. They currently match the English text `Updating cart totals` and `Cart totals updated`. A language-independent status signal is deferred.
 
 ## Rendered markup
 
@@ -83,6 +86,8 @@ Add the IDs to the elements the page already renders:
 <button data-testid="cart-trigger" type="button" aria-label="Cart, 1 item" aria-controls="cart-drawer" aria-haspopup="dialog">…</button>
 
 <!-- Root layout. -->
+<!-- Keep this empty initially. Use the real cart state for updating/updated messages. -->
+<span data-testid="cart-status" role="status" class="sr-only"></span>
 <dialog data-testid="cart-drawer" id="cart-drawer" aria-labelledby="cart-drawer-title">…</dialog>
 
 <!-- /cart route. The drawer renders its own lines the same way. -->
@@ -123,11 +128,18 @@ test("selects a variant and adds it to the cart", async ({ page }) => {
   await expect(addToCart).toBeEnabled();
   await addToCart.click();
 
-  // This store opens the cart drawer after add to cart. If yours does not,
-  // click page.getByTestId("cart-trigger") first. Then find the line by text.
+  // Ordinary add-to-cart setup requires the drawer to open automatically.
+  // Then find the line by text.
   await expect(
     page.getByTestId("cart-drawer").getByTestId("cart-line").filter({ hasText: "Classic Tee" }),
   ).toBeVisible();
+
+  // Let the add settle before navigating away from its optimistic UI.
+  const status = page
+    .getByTestId("cart-status")
+    .and(page.getByRole("status"))
+    .filter({ hasText: "Cart totals updated" });
+  await expect(status).not.toHaveCount(0);
 
   await page.goto("/cart");
   const line = page
@@ -141,6 +153,9 @@ test("selects a variant and adds it to the cart", async ({ page }) => {
   await expect(quantity).toHaveValue("1");
   await line.getByTestId("cart-line-increase").click();
   await expect(quantity).toHaveValue("2");
+
+  // cart-status can repeat. Wait for any status region with the message.
+  await expect(status).not.toHaveCount(0);
 
   await line.getByTestId("cart-line-remove").click();
   await expect(line).toHaveCount(0);
@@ -162,6 +177,7 @@ test("selects a variant and adds it to the cart", async ({ page }) => {
 - [ ] Exactly one `<button>` on the page has `data-testid="product-add-to-cart"`, with native `disabled` or `aria-disabled="true"` when the selection cannot be added
 - [ ] Exactly one element on `/cart` has `data-testid="cart-page"`, and the drawer is not inside it
 - [ ] Exactly one native `<dialog>` has `data-testid="cart-drawer"`
+- [ ] The existing cart totals `role="status"` region has `data-testid="cart-status"` and is not `aria-hidden`
 - [ ] At most one `<button>` or `<a>` that opens the drawer has `data-testid="cart-trigger"`, and plain `/cart` links do not
 - [ ] Each rendered cart line, in the page and in the drawer, has one `data-testid="cart-line"` element that holds its title and controls
 - [ ] Each cart line has exactly one native `<input>` with `data-testid="cart-line-quantity"` and one native `<button>` each with `data-testid="cart-line-increase"` and `data-testid="cart-line-decrease"`

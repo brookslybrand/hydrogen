@@ -45,11 +45,11 @@ Rules:
 - Test IDs do not replace accessibility. The title stays the page heading, each control keeps an accessible name, and state stays in the attributes above.
 - The test IDs do not add a server-rendering or hydration requirement. They go on the same elements the page already renders. Where the page supports server rendering and no-JavaScript selection, the IDs are on the server-rendered elements.
 
-Scope: the product, product variant, cart, and checkout groups use these IDs to find the product title, option values, and add to cart button. The cart group also uses the cart test IDs below. The suite still finds all other UI by role, label, and text, as the sections below describe. This includes product results, collection filters, search, the cart totals status, the cart lines that the checkout group reads, and the checkout link. The storefront can have other test IDs for its own tests. The suite does not read them.
+Scope: the product, product variant, cart, and checkout groups use these IDs to find the product title, option values, and add to cart button. The cart group also uses the cart test IDs below. The suite still finds all other UI by role, label, and text, as the sections below describe. This includes product results, collection filters, search, the cart setup that the checkout group does by itself (its cart lines, drawer, and cart page), and the checkout link. The storefront can have other test IDs for its own tests. The suite does not read them.
 
 ## Cart Test IDs
 
-The cart group finds eight cart elements with standard `data-testid` attributes and Playwright `getByTestId`:
+The cart group finds nine cart elements with standard `data-testid` attributes and Playwright `getByTestId`. With the three product test IDs, the suite reads 12 standard test IDs in total:
 
 | Test ID | Put it on | Count | Evidence the suite reads |
 | --- | --- | --- | --- |
@@ -61,22 +61,25 @@ The cart group finds eight cart elements with standard `data-testid` attributes 
 | `cart-line-increase` | The increase quantity control of each line, a native `<button>` | Exactly one in each line | The click |
 | `cart-line-decrease` | The decrease quantity control of each line, a native `<button>` | Exactly one in each line | The click |
 | `cart-line-remove` | The remove control of each line, a native `<button>` | Exactly one in each line | The click, after which the line must go away |
+| `cart-status` | The existing cart totals live region, the element with `role="status"` | At least one on the page. It can repeat, for example in the cart page, in the drawer, or once for the whole page | Its text, which must contain the English status message (see Cart Line Items) |
 
-A missing or duplicate `cart-page`, `cart-drawer`, or `cart-trigger` fails the test with a contract error. A `cart-drawer` that is not a native `<dialog>`, or a `cart-trigger` that is not a native `<button>` or `<a>`, also fails.
+A missing or duplicate `cart-page`, `cart-drawer`, or `cart-trigger` fails the test with a contract error. A missing `cart-status` with the expected text also fails. A `cart-drawer` that is not a native `<dialog>`, or a `cart-trigger` that is not a native `<button>` or `<a>`, also fails.
 
 Rules:
 
 - Keep the drawer outside the `cart-page` element. The drawer can stay in the page on `/cart`. The `cart-page` ID keeps the two cart views apart.
-- The suite reads `cart-trigger` only when the drawer does not open by itself after Add to cart. It reads the native `open` state of the drawer `<dialog>`. If the drawer is closed, it clicks the trigger, then waits for the line. A drawer can render its lines only when it opens.
+- The stock-limit rollback test reads the native `open` state of the drawer `<dialog>` while its mutation request is held. If the drawer is closed, it clicks `cart-trigger`, then waits for the line. The closed dialog must already be rendered before that click; its lines can render only when it opens. Ordinary add-to-cart setup does not use this trigger fallback.
 - The suite finds a line by `cart-line` inside the cart page or inside the drawer, never across both. In that view, exactly one `cart-line` must contain the product title. No match, or more than one match, fails with a contract error. The same product can have one line in the page and one in the drawer.
 - Put `cart-line` on one element per line that contains the line's title, variant text, quantity input, and line controls. Do not nest it, and do not put it on other list items, such as recommendations. Any element works; the ID does not add an HTML tag requirement.
 - Put `cart-trigger` only on a control that opens the drawer. A link that only goes to `/cart`, for example a fallback link before hydration or on the cart page, is not a trigger. Do not give it the ID.
 - Do not add new test-only attributes for the suite. State and accessible names stay in native attributes and ARIA, for example `aria-controls`, `aria-haspopup`, and `aria-expanded` on the trigger. Existing app attributes can stay.
 - The suite finds `cart-line-quantity`, `cart-line-increase`, `cart-line-decrease`, and `cart-line-remove` only inside the selected `cart-line`. Each one must be the single visible native element of its kind in that line. A missing, duplicate, hidden, or non-native target fails with a contract error. Controls in other lines do not count.
 - The native input value is the quantity. Do not add test-only attributes for the quantity or for pending state. Keep the existing native `disabled` state and accessible names on the buttons, including the remove button.
+- Put `cart-status` on the existing status region that announces cart totals updates. Do not move, duplicate, or restyle the region for the suite. A region outside both the cart page and the drawer is fine.
+- The suite waits until at least one element has `cart-status`, is exposed to assistive technology with `role="status"`, and contains the expected text. It does not need exactly one, and it does not pick a view. An element with the ID but without `role="status"`, or a region hidden with `aria-hidden`, does not count. A status region without the ID does not count.
 - Like the product test IDs, these IDs do not add a server-rendering or hydration requirement.
 
-Scope: the cart group uses these IDs only to find the cart page, the cart drawer, the trigger, the cart lines, and the line quantity and remove controls. It finds the quantity input and the increase, decrease, and remove buttons by test ID inside the line. It finds the cart totals status by role and text. The checkout group does not use the cart test IDs.
+Scope: the cart group uses these IDs only to find the cart page, the cart drawer, the trigger, the cart lines, the line quantity and remove controls, and the cart totals status. It finds the quantity input and the increase, decrease, and remove buttons by test ID inside the line. It finds the totals status by test ID and `role="status"`, then matches its English text. The checkout group does not use the cart test IDs. It still sets up its own cart by role, label, and text.
 
 ## Product Results
 
@@ -122,7 +125,7 @@ In the cart group, each cart line is a visible element with `data-testid="cart-l
 
 The cart and checkout groups add a product with the single button that has `data-testid="product-add-to-cart"` (see Product Test IDs). The button must be enabled for the discovered variant. It keeps an accessible name, such as Add to cart.
 
-After Add to cart, the suite must be able to inspect the added line in the cart drawer (`data-testid="cart-drawer"`) before navigating to the cart page. Either open the drawer immediately with the optimistic line, or expose a visible control with `data-testid="cart-trigger"` so the suite can open the drawer while the update is pending. On the cart page, the suite finds lines inside `data-testid="cart-page"`. In both views, it finds the line with `data-testid="cart-line"`. See Cart Test IDs.
+After ordinary Add to cart, the drawer must open automatically and show the added line before the suite navigates to the cart page. Only the stock-limit rollback test uses `cart-trigger` to open a closed drawer while the mutation request is held. On the cart page, the suite finds lines inside `data-testid="cart-page"`. In both views, it finds the line with `data-testid="cart-line"`. See Cart Test IDs.
 
 Each line must expose:
 
@@ -134,9 +137,9 @@ Each line must expose:
 
 The increase, decrease, and remove buttons keep an accessible name, but the suite does not match their name. It reads the quantity result from the native value of the quantity input. After remove, it waits for the line to go away.
 
-Cart totals must expose a `role="status"` region that says `Updating cart totals` while cart totals are stale, then `Cart totals updated` after mutation settlement. Do not announce `Cart totals updated` on initial idle render before a mutation cycle. The region may be visually hidden if it remains available to assistive technology.
+Cart totals must expose a `role="status"` region with `data-testid="cart-status"` that says `Updating cart totals` while cart totals are stale, then `Cart totals updated` after mutation settlement. Do not announce `Cart totals updated` on initial idle render before a mutation cycle. The region may be visually hidden if it remains available to assistive technology.
 
-The suite finds the totals status anywhere on the page by role and text.
+The suite finds the totals status anywhere on the page by `data-testid="cart-status"` and `role="status"`, then matches the English text. The English text is a known dependency: a storefront in another language must still render these English messages in the status region. A language-independent status signal is deferred and is not part of this contract.
 
 ## Checkout Handoff
 
@@ -168,4 +171,4 @@ Operational expectations:
 
 When the storefront contract changes, update the relevant spec matcher, shared helper, and this document together.
 
-The suite reads test IDs only for the product title, option values, add to cart button, cart page, cart drawer, cart trigger, cart lines, and cart line quantity and remove controls. It finds all other UI by semantic roles and label strings, including the English cart totals status text. Before the suite reads a new test ID, add it to this document.
+The suite reads 12 standard test IDs: three for the product title, option values, and add to cart button, and nine for the cart page, cart drawer, cart trigger, cart lines, cart line quantity and remove controls, and cart status. It finds all other UI by semantic roles and label strings, including all other test groups and the checkout group's own cart setup. It still matches the English cart totals status text inside `cart-status`. Before the suite reads a new test ID, add it to this document.

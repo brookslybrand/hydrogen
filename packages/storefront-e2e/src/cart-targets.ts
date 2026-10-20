@@ -11,6 +11,7 @@ export const CART_LINE_QUANTITY_TEST_ID = "cart-line-quantity";
 export const CART_LINE_INCREASE_TEST_ID = "cart-line-increase";
 export const CART_LINE_DECREASE_TEST_ID = "cart-line-decrease";
 export const CART_LINE_REMOVE_TEST_ID = "cart-line-remove";
+export const CART_STATUS_TEST_ID = "cart-status";
 
 type SingleCartTarget = {
   readonly capability: ContractCapability;
@@ -165,6 +166,37 @@ export async function requireCartLineControl(
   }
 
   return locator;
+}
+
+/**
+ * Waits until at least one cart status region contains `message`. A region
+ * counts only when it has the test ID and is exposed as `role="status"` to
+ * assistive technology. The ID can repeat: the cart page, the drawer, or the
+ * whole page can each render a status region.
+ */
+export async function expectCartStatus(
+  page: Page,
+  message: string,
+  routePath: string,
+  { timeout }: CartTargetOptions = {},
+): Promise<void> {
+  const attribute = `data-testid="${CART_STATUS_TEST_ID}"`;
+  const status = page
+    .getByTestId(CART_STATUS_TEST_ID)
+    .and(page.getByRole("status"))
+    .filter({ hasText: message });
+
+  try {
+    await expect.poll(() => status.count(), { timeout }).toBeGreaterThan(0);
+  } catch {
+    throw createContractError({
+      capability: "cart-status",
+      routePath,
+      expectation: `At least one element with ${attribute} and role="status", exposed to assistive technology, contains "${message}" while cart totals settle.`,
+      likelyFix: `Add ${attribute} to the existing role="status" region that changes from updating to updated around cart mutations. Do not hide it with aria-hidden.`,
+      docsAnchor: "#cart-test-ids",
+    });
+  }
 }
 
 async function requireSingleCartTarget(
