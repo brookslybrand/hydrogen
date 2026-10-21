@@ -135,13 +135,14 @@ Test IDs are acceptable when they disambiguate duplicated UI that is already sem
 
 ### Portable Storefront Test IDs
 
-The portable storefront suite in `packages/storefront-e2e` runs against storefronts it does not own, so it finds three product elements, two product results elements, and ten cart elements (15 IDs in total) with `getByTestId` first:
+The portable storefront suite in `packages/storefront-e2e` runs against storefronts it does not own, so it finds three product elements, two product results elements, two collection filter elements, and ten cart elements (17 IDs in total) with `getByTestId` first:
 
 - `product-title` on the product detail `<h1>` (exactly one on the page)
 - `product-option-value` on each option value `<a>` or `<button>` (the ID repeats; narrow it by accessible name or `href`)
 - `product-add-to-cart` on the add to cart `<button>` (exactly one on the page)
 - `product-results` on the existing collection or search results container (exactly one on the page; recommendations and predictive search do not get it)
 - `product-card` on the primary native `<a href>` product link of each result (the ID repeats; scope it to `product-results`, read only visible cards, narrow it by `href`, then check the link role and an accessible name that contains the product title; count results by unique product URL path)
+- `collection-filter-value` on each list or boolean filter value `<input type="checkbox">`, and `collection-filter-label` on the visible native `<label>` that contains it (both IDs repeat, also in hidden drawer copies; read only visible labels, find the checkbox inside the label, click the label, and read the native checked state; the count is still the first whole number in parentheses in the label text, such as `Red (4)`; up to 20 visible labels are checked before one is chosen)
 - `cart-page` on the `/cart` page content root (exactly one on the cart page; scope cart page lines to it)
 - `cart-drawer` on the cart drawer `<dialog>` (exactly one on the page; scope drawer lines to it)
 - `cart-trigger` on the `<button>` or `<a>` that opens the cart drawer (exactly one when the suite clicks it; plain `/cart` links do not get it)
@@ -153,7 +154,7 @@ The portable storefront suite in `packages/storefront-e2e` runs against storefro
 
 Read state from native attributes, ARIA, and content: `href`, `aria-current`, `aria-pressed`, native `disabled` or `aria-disabled`, and the title text. Do not add new test-only attributes for state or identity. The target markup must stay accessible.
 
-This exception covers only these 15 IDs in the portable suite. The checkout group uses `cart-drawer`, `cart-page`, `cart-line`, and `cart-checkout`. The collection and collection filter groups use `product-results` and `product-card`; filter controls stay label-based. The other test groups, including search, stay role-first. The cart status text is still English; a language-independent signal is deferred. All other portable-suite locators, and all other suites, stay role-first. `packages/storefront-e2e/docs/storefront-contract.md` is the source of truth. Add a new portable test ID only together with that document. Other test IDs in the target app are allowed, but the portable suite does not read them.
+This exception covers only these 17 IDs in the portable suite. The checkout group uses `cart-drawer`, `cart-page`, `cart-line`, and `cart-checkout`. The collection and collection filter groups use `product-results` and `product-card`. The collection filter group also uses `collection-filter-value` and `collection-filter-label`; only the optional Apply filters button stays role-based. The other test groups, including search, stay role-first. The cart status text is still English; a language-independent signal is deferred. All other portable-suite locators, and all other suites, stay role-first. `packages/storefront-e2e/docs/storefront-contract.md` is the source of truth. Add a new portable test ID only together with that document. Other test IDs in the target app are allowed, but the portable suite does not read them.
 
 ### Accessibility Improvements During Test Writing
 

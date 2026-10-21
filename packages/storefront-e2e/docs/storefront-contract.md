@@ -45,11 +45,11 @@ Rules:
 - Test IDs do not replace accessibility. The title stays the page heading, each control keeps an accessible name, and state stays in the attributes above.
 - The test IDs do not add a server-rendering or hydration requirement. They go on the same elements the page already renders. Where the page supports server rendering and no-JavaScript selection, the IDs are on the server-rendered elements.
 
-Scope: the product, product variant, cart, and checkout groups use these IDs to find the product title, option values, and add to cart button. The cart and checkout groups also use the cart test IDs below. The collection and collection filter groups use the product results test IDs below. The suite still finds all other UI by role, label, and text, as the sections below describe. This includes collection filter controls and search. The storefront can have other test IDs for its own tests. The suite does not read them.
+Scope: the product, product variant, cart, and checkout groups use these IDs to find the product title, option values, and add to cart button. The cart and checkout groups also use the cart test IDs below. The collection and collection filter groups use the product results test IDs below. The collection filter group also uses the collection filter test IDs. The suite still finds all other UI by role, label, and text, as the sections below describe. This includes the optional Apply filters button and search. The storefront can have other test IDs for its own tests. The suite does not read them.
 
 ## Cart Test IDs
 
-The suite finds ten cart elements with standard `data-testid` attributes and Playwright `getByTestId`. The cart group uses the first nine. The checkout group uses `cart-drawer`, `cart-page`, `cart-line`, and `cart-checkout`. With the three product test IDs and the two product results test IDs, the suite reads 15 standard test IDs in total:
+The suite finds ten cart elements with standard `data-testid` attributes and Playwright `getByTestId`. The cart group uses the first nine. The checkout group uses `cart-drawer`, `cart-page`, `cart-line`, and `cart-checkout`. With the three product test IDs, the two product results test IDs, and the two collection filter test IDs, the suite reads 17 standard test IDs in total:
 
 | Test ID | Put it on | Count | Evidence the suite reads |
 | --- | --- | --- | --- |
@@ -107,11 +107,31 @@ Scope: the collection group finds the single `product-results` element, then the
 
 ## Collection Filters
 
-At least one probed collection must expose a visible, enabled checkbox filter that changes the URL, returns products, and reduces the visible product card count when selected. Filters may auto-submit or use a visible Apply filters/Show results button.
+At least one probed collection must expose a visible, enabled checkbox filter that changes the URL, returns products, and reduces the visible product card count when selected. The suite finds filter values with two standard `data-testid` attributes and Playwright `getByTestId`:
+
+| Test ID | Put it on | Count | Evidence the suite reads |
+| --- | --- | --- | --- |
+| `collection-filter-value` | Each filter value checkbox: the native `<input type="checkbox">` itself, exposed to assistive technology as a checkbox | One per rendered filter value, so the ID repeats, also in hidden copies such as a mobile drawer | The native checked state, enabled state, and the checkbox role |
+| `collection-filter-label` | The visible native `<label>` that contains that checkbox | One for each `collection-filter-value`, in every copy | Its text content, where the first whole number in parentheses, such as `(4)` in `Red (4)`, is the count, and the click that selects the filter |
+
+Placement: keep the checkbox inside its `<label>`, so the native label association pairs them. Do not point the label's `for` attribute at another element. Only list and boolean checkbox values get the IDs. Price inputs and the sort control do not.
+
+The suite reads only visible labels, so hidden copies of the filters, such as a closed drawer, do not win. It checks the first 20 visible `collection-filter-label` elements before it chooses a filter. Each one must be a native `<label>` that contains exactly one `collection-filter-value` and is the native label of that checkbox. The checkbox must be a native `<input type="checkbox">` exposed as a checkbox. An inspected label that breaks one of these rules fails the test with a contract error, even when an earlier label is usable. Labels after the first 20 are not checked.
+
+After the Storefront API discovery finds a collection with filters, these cases also fail with a contract error, not a skip:
+
+- No visible `collection-filter-label` on the page.
+- A different total number of `collection-filter-label` and `collection-filter-value` elements on the page, including hidden copies. For example, a marked checkbox whose label has no ID.
+
+The suite cannot detect a filter value that has neither ID, and it does not read it. If the marked filters are valid but none has a count that narrows the results, the suite skips the test.
+
+The suite clicks the label and expects the native checkbox to be checked. Filters can apply on change, as the reference storefronts do, so there is no test ID for an Apply button. A remaining semantic branch supports a storefront that needs one: after the click, the suite clicks a visible button whose accessible name contains Apply filters or Show results, if one exists.
+
+Do not add test-only attributes for filter names, values, or state. The native `checked`, `name`, and `value` stay the source of truth.
 
 The suite counts results as the unique product URL paths of the visible `product-card` links inside `product-results` (see Product Results). Product links outside the results, such as navigation or recommendations, do not count.
 
-Filter labels must include a count like Color Red (4). The suite uses that count to choose a filter that narrows the visible product cards, then asserts the filtered result count does not exceed the label count. Browser Back after a filter selection must restore the previous URL and show the same filter unchecked. Missing Storefront API filter data skips the collection filter group.
+Filter labels must include a count like Red (4). The suite reads the text content of the `collection-filter-label`, removes a trailing " - Sold out", and uses the first whole number in parentheses as the count. It does not read counts from the `title` attribute, `aria-label`, or text such as `4 products`, so a label without a parenthesized number is not eligible. A value name that contains a number in parentheses, such as `Pack (2)`, comes first and can give the wrong count. This text dependency is temporary; the suite does not add custom attributes for counts. Known limitation: the React Router template color swatch labels show the count only as `4 products` text, so the suite does not choose swatches. The suite uses that count to choose a filter that narrows the visible product cards, then asserts the filtered result count does not exceed the label count. Browser Back after a filter selection must restore the previous URL and show the same filter, found by the same label text, unchecked. Missing Storefront API filter data skips the collection filter group.
 
 When a probed collection exposes a Storefront API PRICE_RANGE filter, the page must render the price bounds as spinbuttons whose accessible names start with Minimum price and Maximum price. Typing a decimal bound such as 12.5 must put that exact value in the filter.v.price.gte or filter.v.price.lte URL param and keep it in the input. A storefront with no price range filter skips this check.
 
@@ -191,4 +211,4 @@ Operational expectations:
 
 When the storefront contract changes, update the relevant spec matcher, shared helper, and this document together.
 
-The suite reads 15 standard test IDs: three for the product title, option values, and add to cart button, nine for the cart page, cart drawer, cart trigger, cart lines, cart line quantity and remove controls, and cart status, `cart-checkout` for the checkout link, and `product-results` and `product-card` for collection product results. The collection and collection filter groups use `product-results` and `product-card`. The checkout group uses `cart-drawer`, `cart-page`, `cart-line`, and `cart-checkout`. The suite finds all other UI by semantic roles and label strings. It still matches the English cart totals status text inside `cart-status`. Before the suite reads a new test ID, add it to this document.
+The suite reads 17 standard test IDs: three for the product title, option values, and add to cart button, nine for the cart page, cart drawer, cart trigger, cart lines, cart line quantity and remove controls, and cart status, `cart-checkout` for the checkout link, `product-results` and `product-card` for collection product results, and `collection-filter-value` and `collection-filter-label` for collection filter checkboxes. The collection and collection filter groups use `product-results` and `product-card`. The collection filter group also uses `collection-filter-value` and `collection-filter-label`. The checkout group uses `cart-drawer`, `cart-page`, `cart-line`, and `cart-checkout`. The suite finds all other UI by semantic roles and label strings. It still matches the English cart totals status text inside `cart-status`. Before the suite reads a new test ID, add it to this document.
