@@ -168,35 +168,115 @@ export async function requireCartLineControl(
   return locator;
 }
 
+const CART_STATES = ["idle", "updating", "updated", "error"] as const;
+
+/** A `data-cart-state` value on a cart status region. */
+export type CartStatusState = (typeof CART_STATES)[number];
+
+/** A cart state the suite can wait for. `idle` is never a wait target. */
+export type WaitableCartStatusState = Exclude<CartStatusState, "idle">;
+
 /**
- * Waits until at least one cart status region contains `message`. A region
- * counts only when it has the test ID and is exposed as `role="status"` to
- * assistive technology. The ID can repeat: the cart page, the drawer, or the
- * whole page can each render a status region.
+ * Waits until the accessible cart status regions reach `state`. A region counts
+ * only when it has the test ID and is exposed as `role="status"` to assistive
+ * technology. The ID can repeat: the cart page, the drawer, or the whole page
+ * can each render a status region.
+ *
+ * This is a readiness wait, not a verdict on the cart change. `updating` needs
+ * one region that is updating. `updated` needs one updated region and no
+ * region that is updating or has an error. `error` needs one region with an
+ * error and no region that is updating. A region without a valid
+ * `data-cart-state` is a contract failure.
  */
-export async function expectCartStatus(
+export async function waitForCartState(
   page: Page,
-  message: string,
+  state: WaitableCartStatusState,
   routePath: string,
   { timeout }: CartTargetOptions = {},
 ): Promise<void> {
-  const attribute = `data-testid="${CART_STATUS_TEST_ID}"`;
-  const status = page
-    .getByTestId(CART_STATUS_TEST_ID)
-    .and(page.getByRole("status"))
-    .filter({ hasText: message });
+  const statuses = page.getByTestId(CART_STATUS_TEST_ID).and(page.getByRole("status"));
+  let states: CartStatusState[] = [];
+  let stateError: unknown = null;
 
-  try {
-    await expect.poll(() => status.count(), { timeout }).toBeGreaterThan(0);
-  } catch {
+  // An invalid state ends the wait with its own error.
+  const isReached = await expect
+    .poll(
+      async () => {
+        try {
+          states = await readCartStates(statuses, routePath);
+        } catch (error) {
+          stateError = error;
+          return true;
+        }
+        return isCartStateReached(states, state);
+      },
+      { timeout },
+    )
+    .toBe(true)
+    .then(
+      () => true,
+      () => false,
+    );
+  if (stateError !== null) throw stateError;
+  if (isReached) return;
+
+  const attribute = `data-testid="${CART_STATUS_TEST_ID}"`;
+  const found = states.length === 0 ? "none" : states.map((value) => `"${value}"`).join(", ");
+  throw createContractError({
+    capability: "cart-status",
+    routePath,
+    expectation: `The elements with ${attribute} and role="status", exposed to assistive technology, reach data-cart-state="${state}"${cartStateCondition(state)}. Found ${found}.`,
+    likelyFix:
+      states.length === 0
+        ? `Add ${attribute} to the existing role="status" cart totals region. Do not hide it with aria-hidden.`
+        : `Set data-cart-state on each cart status region from the same pending and network error state as its message: updating while the cart change or reload is pending, error after a network failure, updated after a pending cycle, and idle before one.`,
+    docsAnchor: "#cart-test-ids",
+  });
+}
+
+function isCartStateReached(
+  states: readonly CartStatusState[],
+  target: WaitableCartStatusState,
+): boolean {
+  if (!states.includes(target)) return false;
+  if (target === "updating") return true;
+  if (states.includes("updating")) return false;
+  return target === "error" || !states.includes("error");
+}
+
+function cartStateCondition(state: WaitableCartStatusState): string {
+  if (state === "updated") return ', with no region "updating" or "error"';
+  if (state === "error") return ', with no region "updating"';
+  return "";
+}
+
+/** Reads `data-cart-state` from each accessible cart status region. */
+async function readCartStates(statuses: Locator, routePath: string): Promise<CartStatusState[]> {
+  const values = await statuses.evaluateAll((elements) =>
+    elements.map((element) => element.getAttribute("data-cart-state")),
+  );
+  const states: CartStatusState[] = [];
+  for (const value of values) {
+    if (isCartStatusState(value)) {
+      states.push(value);
+      continue;
+    }
+
     throw createContractError({
       capability: "cart-status",
       routePath,
-      expectation: `At least one element with ${attribute} and role="status", exposed to assistive technology, contains "${message}" while cart totals settle.`,
-      likelyFix: `Add ${attribute} to the existing role="status" region that changes from updating to updated around cart mutations. Do not hide it with aria-hidden.`,
+      expectation: `Each element with data-testid="${CART_STATUS_TEST_ID}" and role="status" has data-cart-state set to ${CART_STATES.map((name) => `"${name}"`).join(", ")}. Found ${value === null ? "no data-cart-state" : `"${value}"`}.`,
+      likelyFix:
+        "Render data-cart-state on every cart status region, including the first render, with one of the four values.",
       docsAnchor: "#cart-test-ids",
     });
   }
+
+  return states;
+}
+
+function isCartStatusState(value: string | null): value is CartStatusState {
+  return CART_STATES.some((state) => state === value);
 }
 
 async function requireSingleCartTarget(

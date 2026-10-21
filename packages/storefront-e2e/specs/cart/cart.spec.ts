@@ -1,13 +1,14 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 
 import {
-  expectCartStatus,
   requireCartDrawer,
   requireCartLine,
   requireCartLineControl,
   requireCartPage,
   requireCartTrigger,
+  waitForCartState,
   type CartTargetOptions,
+  type WaitableCartStatusState,
 } from "../../src/cart-targets";
 import { createContractError, StorefrontContractError } from "../../src/contract";
 import { requireProductAddToCart } from "../../src/product-targets";
@@ -16,8 +17,6 @@ import { test, type CartTestProduct } from "./config";
 const CART_SETTLE_TIMEOUT_MS = 15_000;
 const CART_TARGET_OPTIONS: CartTargetOptions = { timeout: CART_SETTLE_TIMEOUT_MS };
 const CART_ENDPOINT_PATTERN = "**/api/cart";
-const CART_TOTALS_UPDATING_TEXT = "Updating cart totals";
-const CART_TOTALS_UPDATED_TEXT = "Cart totals updated";
 
 type CartExpectation = {
   readonly cartPath: string;
@@ -87,7 +86,7 @@ test("cart rolls back an optimistic add beyond available stock", async ({ data, 
         message: `Expected cart line quantity to optimistically increase from ${product.maxQuantity} to ${product.maxQuantity + 1}.`,
       })
       .toBe(product.maxQuantity + 1);
-    await expectCartTotalsStatus(page, CART_TOTALS_UPDATING_TEXT, data.paths.cart);
+    await waitForCartTotalsState(page, "updating", data.paths.cart);
 
     requestGate.release();
     await expect
@@ -95,7 +94,7 @@ test("cart rolls back an optimistic add beyond available stock", async ({ data, 
         message: `Expected cart line quantity to roll back to the stock limit of ${product.maxQuantity}.`,
       })
       .toBe(product.maxQuantity);
-    await expectCartTotalsStatus(page, CART_TOTALS_UPDATED_TEXT, data.paths.cart);
+    await waitForCartTotalsState(page, "updated", data.paths.cart);
   } finally {
     requestGate.release();
     await page.unroute(CART_ENDPOINT_PATTERN);
@@ -453,64 +452,131 @@ test.describe("cart target helpers", () => {
     page,
   }) => {
     const cases = [
-      `<span role="status">${CART_TOTALS_UPDATED_TEXT}</span>`,
-      `<span data-testid="cart-status">${CART_TOTALS_UPDATED_TEXT}</span>`,
-      `<span role="status" data-testid="cart-status" aria-hidden="true">${CART_TOTALS_UPDATED_TEXT}</span>`,
+      `<span role="status" data-cart-state="updated">Warenkorb aktualisiert</span>`,
+      `<span data-testid="cart-status" data-cart-state="updated">Warenkorb aktualisiert</span>`,
+      `<span role="status" data-testid="cart-status" data-cart-state="updated" aria-hidden="true">Warenkorb aktualisiert</span>`,
+      `<span role="status" data-testid="cart-status" data-cart-state="updated" hidden>Warenkorb aktualisiert</span>`,
     ];
 
     for (const html of cases) {
       await test.step(html, async () => {
         await page.setContent(`
           <div data-testid="cart-page"></div>
-          <span role="status" data-testid="cart-status">${CART_TOTALS_UPDATING_TEXT}</span>
+          ${cartStatusHtml("idle", "")}
           ${html}`);
         await expectContractError(
-          expectCartTotalsStatus(page, CART_TOTALS_UPDATED_TEXT, cartPath, options),
-          /data-testid="cart-status" and role="status", exposed to assistive technology, contains "Cart totals updated"/,
+          waitForCartTotalsState(page, "updated", cartPath, options),
+          /data-testid="cart-status" and role="status", exposed to assistive technology, reach data-cart-state="updated", with no region "updating" or "error"\. Found "idle"\./,
         );
       });
     }
   });
 
-  test("accepts one global status region outside the cart page and drawer", async ({ page }) => {
+  test("reads the state, not the message text, in one global region", async ({ page }) => {
     await page.setContent(`
-      <span role="status" data-testid="cart-status" style="${VISUALLY_HIDDEN_STYLE}">${CART_TOTALS_UPDATED_TEXT}</span>
+      ${cartStatusHtml("updated", "Warenkorb aktualisiert", `style="${VISUALLY_HIDDEN_STYLE}"`)}
       <div data-testid="cart-page"><ul>${cartLineHtml("Shirt")}</ul></div>
       <dialog data-testid="cart-drawer"><ul>${cartLineHtml("Shirt")}</ul></dialog>`);
 
-    await expectCartTotalsStatus(page, CART_TOTALS_UPDATED_TEXT, cartPath, options);
+    await waitForCartTotalsState(page, "updated", cartPath, options);
   });
 
   test("accepts status regions in both the cart page and the drawer", async ({ page }) => {
-    // Each view renders its own region. Either one can carry the message.
+    // Each view renders its own region. An idle view does not block updated.
     await page.setContent(`
-      <div data-testid="cart-page">
-        <span role="status" data-testid="cart-status" style="${VISUALLY_HIDDEN_STYLE}">${CART_TOTALS_UPDATING_TEXT}</span>
-      </div>
-      <dialog open data-testid="cart-drawer">
-        <span role="status" data-testid="cart-status" style="${VISUALLY_HIDDEN_STYLE}">${CART_TOTALS_UPDATED_TEXT}</span>
-      </dialog>`);
+      <div data-testid="cart-page">${cartStatusHtml("updated", "")}</div>
+      <dialog open data-testid="cart-drawer">${cartStatusHtml("idle", "")}</dialog>`);
 
-    await expectCartTotalsStatus(page, CART_TOTALS_UPDATING_TEXT, cartPath, options);
-    await expectCartTotalsStatus(page, CART_TOTALS_UPDATED_TEXT, cartPath, options);
+    await waitForCartTotalsState(page, "updated", cartPath, options);
   });
 
-  test("waits for the status message to change", async ({ page }) => {
-    await page.setContent(
-      `<span id="status" role="status" data-testid="cart-status">${CART_TOTALS_UPDATING_TEXT}</span>`,
-    );
-    await expectCartTotalsStatus(page, CART_TOTALS_UPDATING_TEXT, cartPath, options);
+  test("does not settle on updated while another region is updating or has an error", async ({
+    page,
+  }) => {
+    const cases: [string, RegExp][] = [
+      [cartStatusHtml("updating", "…"), /Found "updated", "updating"\./],
+      [cartStatusHtml("error", ""), /Found "updated", "error"\./],
+    ];
 
-    const updated = expectCartTotalsStatus(page, CART_TOTALS_UPDATED_TEXT, cartPath, {
-      timeout: 2_000,
+    for (const [other, message] of cases) {
+      await test.step(other, async () => {
+        await page.setContent(`${cartStatusHtml("updated", "Done")}${other}`);
+        await expectContractError(
+          waitForCartTotalsState(page, "updated", cartPath, options),
+          message,
+        );
+      });
+    }
+  });
+
+  test("does not settle on updated for an idle or error state", async ({ page }) => {
+    for (const state of ["idle", "error"] as const) {
+      await test.step(state, async () => {
+        await page.setContent(cartStatusHtml(state, "Cart totals updated"));
+        await expectContractError(
+          waitForCartTotalsState(page, "updated", cartPath, options),
+          new RegExp(`reach data-cart-state="updated".*Found "${state}"\\.`),
+        );
+      });
+    }
+  });
+
+  test("waits for an error state when asked", async ({ page }) => {
+    await page.setContent(`${cartStatusHtml("error", "")}${cartStatusHtml("idle", "")}`);
+
+    await waitForCartTotalsState(page, "error", cartPath, options);
+
+    await page.setContent(`${cartStatusHtml("error", "")}${cartStatusHtml("updating", "")}`);
+    await expectContractError(
+      waitForCartTotalsState(page, "error", cartPath, options),
+      /reach data-cart-state="error", with no region "updating"\. Found "error", "updating"\./,
+    );
+  });
+
+  test("fails clearly for a missing or invalid state", async ({ page }) => {
+    const cases: [string, RegExp][] = [
+      [
+        `<span role="status" data-testid="cart-status">Cart totals updated</span>`,
+        /has data-cart-state set to "idle", "updating", "updated", "error"\. Found no data-cart-state\./,
+      ],
+      [cartStatusHtml("done", "Cart totals updated"), /Found "done"\./],
+      [`${cartStatusHtml("updated", "")}${cartStatusHtml("", "")}`, /Found ""\./],
+    ];
+
+    for (const [html, message] of cases) {
+      await test.step(html, async () => {
+        await page.setContent(html);
+        await expectContractError(
+          waitForCartTotalsState(page, "updated", cartPath, options),
+          message,
+        );
+      });
+    }
+
+    await page.setContent(`<div data-testid="cart-page"></div>`);
+    await expectContractError(
+      waitForCartTotalsState(page, "updating", cartPath, options),
+      /reach data-cart-state="updating"\. Found none\./,
+    );
+  });
+
+  test("waits for the state to change, with any message text", async ({ page }) => {
+    await page.setContent(cartStatusHtml("updating", "Wird aktualisiert"));
+    await waitForCartTotalsState(page, "updating", cartPath, options);
+
+    const updated = waitForCartTotalsState(page, "updated", cartPath, { timeout: 2_000 });
+    await expect(page.getByTestId("cart-status")).toHaveAttribute("data-cart-state", "updating");
+    await page.getByTestId("cart-status").evaluate((status) => {
+      status.setAttribute("data-cart-state", "updated");
     });
-    await expect(page.getByTestId("cart-status")).toHaveText(CART_TOTALS_UPDATING_TEXT);
-    await page.getByTestId("cart-status").evaluate((status, message) => {
-      status.textContent = message;
-    }, CART_TOTALS_UPDATED_TEXT);
     await updated;
   });
 });
+
+/** A cart status region for helper fixtures. The text is arbitrary on purpose. */
+function cartStatusHtml(state: string, text: string, attributes = ""): string {
+  return `<span role="status" data-testid="cart-status" data-cart-state="${state}" ${attributes}>${text}</span>`;
+}
 
 function createRequestGate(): { wait: Promise<void>; release: () => void } {
   let release: (() => void) | undefined;
@@ -567,7 +633,7 @@ async function tryAddProductToCart(
   await expect(line).toBeVisible({
     timeout: CART_SETTLE_TIMEOUT_MS,
   });
-  await expectCartTotalsStatus(page, CART_TOTALS_UPDATED_TEXT, cartPath);
+  await waitForCartTotalsState(page, "updated", cartPath);
   await page.goto(cartPath);
   await expectCartLine(page, expectation);
 
@@ -590,14 +656,14 @@ async function setCartLineQuantity(
   try {
     await quantityInput.fill(String(quantity));
     await quantityInput.press("Tab");
-    await expectCartTotalsStatus(page, CART_TOTALS_UPDATING_TEXT, expectation.cartPath);
+    await waitForCartTotalsState(page, "updating", expectation.cartPath);
     requestGate.release();
     await expect
       .poll(() => numericInputValue(quantityInput), {
         message: `Expected cart line quantity to settle at the discovered stock limit of ${quantity}.`,
       })
       .toBe(quantity);
-    await expectCartTotalsStatus(page, CART_TOTALS_UPDATED_TEXT, expectation.cartPath);
+    await waitForCartTotalsState(page, "updated", expectation.cartPath);
   } finally {
     requestGate.release();
     await page.unroute(CART_ENDPOINT_PATTERN);
@@ -693,13 +759,13 @@ async function openCartOverlayFor(
   return requireCartLine(drawer, "cart drawer", productTitle, routePath, options);
 }
 
-async function expectCartTotalsStatus(
+async function waitForCartTotalsState(
   page: Page,
-  message: string,
+  state: WaitableCartStatusState,
   cartPath: string,
   options: CartTargetOptions = CART_TARGET_OPTIONS,
 ): Promise<void> {
-  await expectCartStatus(page, message, cartPath, options);
+  await waitForCartState(page, state, cartPath, options);
 }
 
 async function cartLineFor(

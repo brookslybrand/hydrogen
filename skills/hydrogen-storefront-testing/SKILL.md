@@ -36,7 +36,7 @@ Exactly one means the whole page. If recommendations, a sticky bar, or a quick-a
 Rules:
 
 - Put the ID on the element the buyer reads or activates, not on a wrapper, label, or list item.
-- A test ID only says what kind of element this is. Do not put option names, values, variant IDs, or state in the ID. Do not add new test-only attributes. Existing `data-*` attributes that your app uses, for example for styling, can stay.
+- A test ID only says what kind of element this is. Do not put option names, values, variant IDs, or state in the ID. Do not add new test-only attributes. Existing `data-*` attributes that your app uses, for example for styling, can stay. The one exception is `data-cart-state` on `cart-status`.
 - State comes from native attributes, ARIA, and real content:
   - The selected option link has `aria-current="true"`.
   - An option button has `aria-pressed`, and the selected one has `aria-pressed="true"`.
@@ -102,7 +102,7 @@ Rules:
 | `cart-line-increase` | The increase quantity control of each line, a native `<button>` | Exactly one in each line | The click |
 | `cart-line-decrease` | The decrease quantity control of each line, a native `<button>` | Exactly one in each line | The click |
 | `cart-line-remove` | The remove control of each line, a native `<button>` | Exactly one in each line | The click |
-| `cart-status` | The existing cart totals live region with `role="status"` | At least one. It can repeat, for example in the page and the drawer, or once for the whole page | Its text |
+| `cart-status` | The existing cart totals live region with `role="status"` | At least one. It can repeat, for example in the page and the drawer, or once for the whole page | Its `data-cart-state` value, not its text |
 | `cart-checkout` | The checkout link of each populated cart view: a visible native `<a>` with a real `href` to the checkout URL, exposed as a link with a non-empty accessible name in any language | One per populated cart view, so it can repeat in the page and the drawer. Exactly one inside the cart page | The `href`, the link role and name, and the click on the cart page link |
 
 Rules:
@@ -118,7 +118,13 @@ Rules:
 - Put the quantity and remove IDs on the native input and buttons inside the line, not on wrappers. Keep their accessible names and native `disabled` state. Tests do not match the button names, so a localized name such as `Entfernen` works.
 - The native input value is the quantity. Do not add test-only attributes for the quantity or pending state.
 - Put `cart-status` on the existing `role="status"` region that announces cart totals updates. Do not move or duplicate it for tests. Keep it exposed to assistive technology; a visually hidden region is fine, an `aria-hidden` one does not count.
-- Portable tests wait for at least one `cart-status` region with `role="status"` that contains the message. They currently match the English text `Updating cart totals` and `Cart totals updated`. A language-independent status signal is deferred.
+- Give each `cart-status` region `data-cart-state`, derived from the same cart state as its message:
+  - `updating` while a change that can affect totals, or a cart reload, is pending. Count `pending.cost` and revalidation as pending, not only line, note, or discount changes.
+  - `error` when the last cycle ended with a network failure that is still unresolved.
+  - `updated` after a pending cycle finished without a network failure. Line or discount user errors and warnings can still show.
+  - `idle` before the first pending cycle. Do not start in `updated`.
+- Derive the message from the state. Keep the message accessible and translatable; tests do not read it.
+- The state is for waiting only. Tests wait for it, then check the real result, such as the quantity value or the line. A wait for `updated` ends only when no accessible `cart-status` is `updating` or `error`. `idle` and `error` never count as `updated`.
 
 ## Rendered markup
 
@@ -163,8 +169,8 @@ Add the IDs to the elements the page already renders:
 <button data-testid="cart-trigger" type="button" aria-label="Cart, 1 item" aria-controls="cart-drawer" aria-haspopup="dialog">…</button>
 
 <!-- Root layout. -->
-<!-- Keep this empty initially. Use the real cart state for updating/updated messages. -->
-<span data-testid="cart-status" role="status" class="sr-only"></span>
+<!-- Starts idle and empty. Set the state and message from the real cart state. -->
+<span data-testid="cart-status" data-cart-state="idle" role="status" class="sr-only"></span>
 <dialog data-testid="cart-drawer" id="cart-drawer" aria-labelledby="cart-drawer-title">…</dialog>
 
 <!-- /cart route. The drawer renders its own lines the same way. -->
@@ -213,11 +219,20 @@ test("selects a variant and adds it to the cart", async ({ page }) => {
   ).toBeVisible();
 
   // Let the add settle before navigating away from its optimistic UI.
-  const status = page
-    .getByTestId("cart-status")
-    .and(page.getByRole("status"))
-    .filter({ hasText: "Cart totals updated" });
-  await expect(status).not.toHaveCount(0);
+  // cart-status can repeat. Wait until one is updated and none is updating or failed.
+  const statuses = page.getByTestId("cart-status").and(page.getByRole("status"));
+  const waitForUpdated = () =>
+    expect
+      .poll(async () => {
+        const states = await statuses.evaluateAll((elements) =>
+          elements.map((element) => element.getAttribute("data-cart-state")),
+        );
+        return (
+          states.includes("updated") && !states.includes("updating") && !states.includes("error")
+        );
+      })
+      .toBe(true);
+  await waitForUpdated();
 
   await page.goto("/cart");
   const line = page
@@ -232,8 +247,8 @@ test("selects a variant and adds it to the cart", async ({ page }) => {
   await line.getByTestId("cart-line-increase").click();
   await expect(quantity).toHaveValue("2");
 
-  // cart-status can repeat. Wait for any status region with the message.
-  await expect(status).not.toHaveCount(0);
+  // The state is only a wait. The quantity value above is the result.
+  await waitForUpdated();
 
   await line.getByTestId("cart-line-remove").click();
   await expect(line).toHaveCount(0);
@@ -279,6 +294,7 @@ test("shows a product in the collection results", async ({ page }) => {
 - [ ] Exactly one native `<dialog>` has `data-testid="cart-drawer"`
 - [ ] Each populated cart view has one visible native `<a href>` checkout link with a non-empty accessible name and `data-testid="cart-checkout"`, and the cart page has exactly one
 - [ ] The existing cart totals `role="status"` region has `data-testid="cart-status"` and is not `aria-hidden`
+- [ ] Each `cart-status` has `data-cart-state` with `idle`, `updating`, `updated`, or `error`, derived from the same state as its message, and starts as `idle`
 - [ ] At most one `<button>` or `<a>` that opens the drawer has `data-testid="cart-trigger"`, and plain `/cart` links do not
 - [ ] Each rendered cart line, in the page and in the drawer, has one `data-testid="cart-line"` element that holds its title and controls
 - [ ] Each cart line has exactly one native `<input>` with `data-testid="cart-line-quantity"` and one native `<button>` each with `data-testid="cart-line-increase"` and `data-testid="cart-line-decrease"`
