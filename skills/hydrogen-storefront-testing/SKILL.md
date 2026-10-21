@@ -20,7 +20,7 @@ This is a repository skill for agents who maintain the portable storefront suite
 
 Portable storefront tests run against any storefront URL, so they cannot depend on your markup or class names. The product page exposes three standard `data-testid` attributes, collection and search results expose two, collection and search filters expose two, and the cart exposes ten more, so there are 17 in total. Tests find these elements with Playwright `getByTestId`.
 
-Only these 17 IDs are standard. Portable tests still find other storefront UI (search, an optional Apply filters button) by role, label, and text. Your storefront can have other test IDs for its own tests. Portable tests do not read them.
+Only these 17 IDs are standard. Portable tests still find other storefront UI (the search input and submit button, an optional Apply filters button) by role, label, and text. Your storefront can have other test IDs for its own tests. Portable tests do not read them.
 
 ## The product contract
 
@@ -54,6 +54,8 @@ Rules:
 Rules:
 
 - Put `product-results` on the main results only. Do not put it on recommendations or predictive search results. Product cards outside `product-results` do not count.
+- On the search page, after a query, render `product-results` for matching results and for empty results. Put it on the existing empty-state element when there are no results; only one of the two renders at a time. Before a query, the page does not need it.
+- Tests find the searched product by its handle in the card `href`, then check that the accessible name contains its title. A card for a similar title, such as `T-Shirt` for `Shirt`, does not match.
 - Put `product-card` on the primary `<a href>` product link, not on the card wrapper, such as an `<article>` or list item. If a card has an image link and a title link to the same product, mark only one.
 - Keep the link visible with its native link role (no `aria-hidden`, `hidden`, or `role="button"`), and keep the product title in its accessible name. Tests do not match other text, so any language works. Tests read only visible cards, so hidden responsive copies do not count.
 - Use existing elements. Do not add a wrapper or change the layout for tests. An element has only one `data-testid`, so if the grid already has another test ID, put `product-results` on an existing parent.
@@ -246,7 +248,7 @@ test("shows a product in the collection results", async ({ page }) => {
 - [ ] The selected option has `aria-current="true"` (link) or `aria-pressed="true"` (button)
 - [ ] Option values for combinations that do not exist are buttons with native `disabled`
 - [ ] Exactly one `<button>` on the page has `data-testid="product-add-to-cart"`, with native `disabled` or `aria-disabled="true"` when the selection cannot be added
-- [ ] On each collection and search page that shows results, exactly one existing element has `data-testid="product-results"`, and recommendations and predictive search do not
+- [ ] On each collection page that shows results, and on each search page after a query (with or without results), exactly one existing element has `data-testid="product-results"`, and recommendations and predictive search do not
 - [ ] The primary product link of each result is a visible native `<a href>` to the product page with `data-testid="product-card"`, and its accessible name contains the product title
 - [ ] Each list or boolean filter value is a native `<input type="checkbox">` with `data-testid="collection-filter-value"`, inside a visible native `<label>` with `data-testid="collection-filter-label"` whose text has the count as a whole number in parentheses, such as `Red (4)`, in every copy of the filters
 - [ ] Exactly one element on `/cart` has `data-testid="cart-page"`, and the drawer is not inside it

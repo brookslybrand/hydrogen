@@ -91,15 +91,63 @@ export type ExpectedProduct = {
  * Returns the visible product card link to the product detail page of
  * `product` inside `results`. The link must be exposed to assistive
  * technology as a link whose accessible name contains the product title
- * (case does not matter).
+ * (case does not matter). No card for the product is a contract failure.
  */
 export async function requireProductCardLink(
   results: Locator,
   productPathSegment: string,
   product: ExpectedProduct,
   routePath: string,
-  { timeout }: ProductResultsOptions = {},
+  options: ProductResultsOptions = {},
 ): Promise<Locator> {
+  const { card, visibleCardCount } = await locateProductCardLink(
+    results,
+    productPathSegment,
+    product,
+    routePath,
+    options,
+  );
+  if (card !== null) return card;
+
+  throw createContractError({
+    capability: "product-results",
+    routePath,
+    expectation: `The element with ${RESULTS_ATTRIBUTE} contains a visible element with ${CARD_ATTRIBUTE} that links to ${productPathSegment}${product.handle}. Found ${visibleCardCount} visible product card links.`,
+    likelyFix: `Add ${CARD_ATTRIBUTE} to the primary <a href> product link of each result inside the ${RESULTS_ATTRIBUTE} container.`,
+    docsAnchor: DOCS_ANCHOR,
+  });
+}
+
+/**
+ * Like `requireProductCardLink`, but returns null when the results have no
+ * visible card for the product, for example a search with no or other
+ * results. Invalid cards, and a matching card that is not an accessible link
+ * with the product title, still throw contract errors.
+ */
+export async function findProductCardLink(
+  results: Locator,
+  productPathSegment: string,
+  product: ExpectedProduct,
+  routePath: string,
+  options: ProductResultsOptions = {},
+): Promise<Locator | null> {
+  const { card } = await locateProductCardLink(
+    results,
+    productPathSegment,
+    product,
+    routePath,
+    options,
+  );
+  return card;
+}
+
+async function locateProductCardLink(
+  results: Locator,
+  productPathSegment: string,
+  product: ExpectedProduct,
+  routePath: string,
+  { timeout }: ProductResultsOptions,
+): Promise<{ readonly card: Locator | null; readonly visibleCardCount: number }> {
   const productPath = `${productPathSegment}${product.handle}`;
   // Allow a path prefix, such as a locale: /en-ca/products/:handle.
   const isProductCard = (card: ProductCardLink) => card.url.pathname.endsWith(productPath);
@@ -125,15 +173,7 @@ export async function requireProductCardLink(
   if (cardError !== null) throw cardError;
 
   const match = cards.find(isProductCard);
-  if (match === undefined) {
-    throw createContractError({
-      capability: "product-results",
-      routePath,
-      expectation: `The element with ${RESULTS_ATTRIBUTE} contains a visible element with ${CARD_ATTRIBUTE} that links to ${productPath}. Found ${cards.length} visible product card links.`,
-      likelyFix: `Add ${CARD_ATTRIBUTE} to the primary <a href> product link of each result inside the ${RESULTS_ATTRIBUTE} container.`,
-      docsAnchor: DOCS_ANCHOR,
-    });
-  }
+  if (match === undefined) return { card: null, visibleCardCount: cards.length };
 
   const card = visibleProductCards(results).nth(match.index);
   // The results can render again after the read. Check that the card at the
@@ -174,7 +214,7 @@ export async function requireProductCardLink(
     });
   }
 
-  return card;
+  return { card, visibleCardCount: cards.length };
 }
 
 /** Visible product cards inside `results`. Hidden cards are not read or checked. */
