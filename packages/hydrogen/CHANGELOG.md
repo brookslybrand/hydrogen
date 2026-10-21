@@ -1,5 +1,23 @@
 # @shopify/hydrogen
 
+## 2026.10.3
+
+### Minor Changes
+
+- 6bd7464: Export `PredictiveSearchDataFromHandlers` and `SearchResultUrlOptions` from `@shopify/hydrogen`. `PredictiveSearchDataFromHandlers` types `usePredictiveSearch()` state from the same custom fragments as the server handlers: `usePredictiveSearch<PredictiveSearchDataFromHandlers<typeof predictiveSearchHandlers>>()`. `SearchResultUrlOptions` is the options type of `getSearchResultUrl()`.
+
+### Patch Changes
+
+- 4e7fdeb: `/checkout` and `/cart/<permalink>` redirects now send `Cache-Control: private, no-store, max-age=0, must-revalidate`, so shared caches can't store a buyer-specific checkout URL. The checkout redirect also no longer intercepts `/account/login`, `/account/authorize`, `/account/refresh`, or `/account/logout`, so apps that serve these routes with their own handlers now receive the requests.
+- 8cc32d8: Fix price filter parsing for shops whose locale uses a dot as the group separator (e.g. de, nl, tr). Canonical decimal values like `12.5` from serialized URLs and number inputs now parse correctly regardless of shop locale.
+- ddb7aa5: Give a collection-scoped product match without a collection handle the product's standard path. A `productInCollection` template that leaves out `:collectionHandle` used to match with a `standardPathname` of `/collections/:collectionHandle/products/<handle>`, placeholder included. It is now `/products/<handle>`, and `templates.standard` is the product template to match.
+- 1d99e40: A malformed `cart` cookie is treated as a missing cart, and malformed percent sequences in collection filter keys stay literal, instead of failing the request.
+- b2d0356: Responses that Hydrogen makes private, such as personalized, session, and checkout redirect responses, now also drop `Oxygen-Cache-Control` and any other vendor `*-Cache-Control` header. Oxygen's full-page cache prefers `Oxygen-Cache-Control` over `Cache-Control`, so before this change a route that opted into the full-page cache could still store a page with customer data and serve it to other visitors.
+- 8fe4e23: `hydrogen setup` now downloads the React Router template from the `dist` branch instead of `dist-preview`.
+- c4d7b05: The Storefront API client no longer follows redirects. Runtimes forward custom Shopify headers such as `Shopify-Storefront-Private-Token` across origins when they follow a redirect, so a `3xx` response from the Storefront API now throws a `StorefrontApiError` instead. Rejected redirects no longer contribute `Set-Cookie` headers to the response.
+  
+  `createFetchWithCache()` now returns opaque responses, such as a browser `redirect: "manual"` response, unchanged instead of failing with a `RangeError` while serializing their `0` status.
+
 ## 2026.10.2
 
 ### Patch Changes
