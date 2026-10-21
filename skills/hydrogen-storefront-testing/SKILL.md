@@ -125,6 +125,7 @@ Rules:
   - `idle` before the first pending cycle. Do not start in `updated`.
 - Derive the message from the state. Keep the message accessible and translatable; tests do not read it.
 - The state is for waiting only. Tests wait for it, then check the real result, such as the quantity value or the line. A wait for `updated` ends only when no accessible `cart-status` is `updating` or `error`. `idle` and `error` never count as `updated`.
+- `updated` can remain between changes. For another change on the same page, first observe its new `updating` state. Do not use the previous `updated` value as evidence that the new change finished.
 
 ## Rendered markup
 
@@ -245,12 +246,21 @@ test("selects a variant and adds it to the cart", async ({ page }) => {
   const quantity = line.getByTestId("cart-line-quantity");
   await expect(quantity).toHaveValue("1");
   await line.getByTestId("cart-line-increase").click();
+  // Wait for the optimistic change, then for the cart to settle.
+  await expect(quantity).toHaveValue("2");
+  await waitForUpdated();
+  // The state is only a wait. Read the native quantity again as the result.
   await expect(quantity).toHaveValue("2");
 
-  // The state is only a wait. The quantity value above is the result.
-  await waitForUpdated();
+  // After a reload, the same line still shows the quantity.
+  await page.reload();
+  await expect(line).toBeVisible();
+  await expect(quantity).toHaveValue("2");
 
   await line.getByTestId("cart-line-remove").click();
+  await expect(line).toHaveCount(0);
+  // Let the removal settle before the test ends or navigates, then check again.
+  await waitForUpdated();
   await expect(line).toHaveCount(0);
 });
 
@@ -276,6 +286,8 @@ test("shows a product in the collection results", async ({ page }) => {
 - Narrow `product-option-value` by accessible name, role, or `href`. Do not use `.nth()`, because option order is store data.
 - Read selection from `aria-current` or `aria-pressed`. Do not read class names or styles.
 - Wait for visible results. Do not wait for timeouts, network idle, or responses.
+- Use `data-cart-state` only to wait. Assert the result after the wait: the native quantity value, the line, and the variant text. A reload checks what the storefront renders for the stored cart; it is a UI check, not proof of the stored data.
+- To check a removal after a reload, keep a second line in the cart and expect it, with its quantity, before you check that the removed line is gone. An empty or loading cart page has no removed line either.
 - Create state through the UI, as a buyer does. Do not set cart cookies or storage.
 
 ## Checklist

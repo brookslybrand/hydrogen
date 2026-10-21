@@ -197,6 +197,15 @@ Each line must expose:
 
 The increase, decrease, and remove buttons keep an accessible name, but the suite does not match their name. It reads the quantity result from the native value of the quantity input. After remove, it waits for the line to go away.
 
+The verdict comes from the native quantity values, the line and variant text, and what a reload shows. The cart state is only a wait (see below). The cart group covers:
+
+- Quantity: the suite clicks increase and waits for the optimistic native value. Then it waits for `updated`, reads the native value again, reloads the cart page, and expects the same line, variant text, and native value. It does the same for decrease, starting from the reloaded page.
+- Removal of the only line: the suite waits for the line to go away, waits for `updated`, and checks again that the line is gone. It does not reload, because an empty cart page cannot show that the cart loaded.
+- Removal persistence with two lines: the suite adds two products through the UI, one time each, and expects native quantity 1 on both lines. It removes the first line, waits for `updated`, checks that the line is gone, and that the second line still shows quantity 1. Then it reloads. The second line, with its variant text and quantity 1, must show first, so an empty or loading cart page cannot pass. Only then does the suite check that the removed line is gone. The second product must have a title that the line lookup can tell apart: neither title contains the other, case ignored. If no discovered product qualifies, the test skips with that reason. A second product whose Add to cart is disabled is passed over, like the first; if none is enabled, the test fails with a contract error.
+- Stock limit rollback: after `updated`, the suite reads the native quantity again and expects the stock limit.
+
+A reload shows what the storefront renders for its stored cart. It is a UI check, not proof of the data that Shopify stores.
+
 Cart totals must expose a `role="status"` region with `data-testid="cart-status"` that announces when cart totals are stale and when they are updated, in any language. Do not announce an update on the first render before a cart change. The region may be visually hidden if it remains available to assistive technology.
 
 - Each `cart-status` region has `data-cart-state`, derived from the same cart state as its message, with one of four values:
@@ -209,6 +218,8 @@ Cart totals must expose a `role="status"` region with `data-testid="cart-status"
 The suite finds the totals status anywhere on the page by `data-testid="cart-status"` and `role="status"`, then waits for a state. The state is a readiness signal only. After the wait, the suite still checks the real outcome, such as the native quantity value or the line. A wait for `updating` needs one region that is updating. A wait for `updated` needs one updated region and no region that is updating or has an error, so an old `updated` region does not end the wait while another view is still updating. `idle` and `error` never end a wait for `updated`. A wait for `error` needs one region with an error and no region that is updating. Regions that are idle, for example a view that mounted after the change, do not block a wait.
 
 Count authoritative cart reloads as pending, as well as the change itself. For example, a storefront that marks totals as pending only while lines, the note, or discount codes change also marks them pending while `pending.cost` is `true` or the cart is revalidating.
+
+`updated` can remain between changes; the helper does not identify a new cycle. The live journeys either make the first change after navigation or reload, or observe `updating` before waiting for `updated`. For another change on the same page, first observe its new `updating` state rather than accept a previous `updated` value.
 
 ## Checkout Handoff
 
