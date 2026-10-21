@@ -286,6 +286,19 @@ jobs:
             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=npm" | jq -r '.value')
           [ -n "$TOKEN" ] && echo "✅ OIDC working" || exit 1
 
+      - name: Remember which release holds GitHub's "Latest" badge
+        id: latest-release
+        # changesets/action creates every GitHub Release with GitHub's default
+        # "latest" handling, which can move the repository's "Latest" badge onto
+        # a back-fix release. The action has no input to control it
+        # (changesets/action#340), so remember the release that legitimately
+        # holds the badge and put it back after publishing.
+        run: |
+          tag=$(gh api "repos/${{ github.repository }}/releases/latest" --jq .tag_name)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.SHOPIFY_GH_ACCESS_TOKEN }}
+
       - name: Create Back-fix Release Pull Request or Publish (for back-fix release)
         id: changesets
         uses: changesets/action@6a0a831ff30acef54f2c6aa1cbbc1096b066edaf # v1.7.0
@@ -299,6 +312,17 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.SHOPIFY_GH_ACCESS_TOKEN }}
           NPM_TOKEN: '' # Empty string forces OIDC authentication
+
+      - name: Keep GitHub's "Latest" badge on the current release line
+        # This branch ships an older release line than the default branch, so a
+        # release published from here must never be the repository's "Latest".
+        # Re-marking the release that held the badge before this run is a no-op
+        # when publishing did not move it, and repairs it when it did, including
+        # when publishing failed part way through.
+        if: ${{ !cancelled() && steps.latest-release.outputs.tag != '' }}
+        run: gh release edit '${{ steps.latest-release.outputs.tag }}' --latest
+        env:
+          GH_TOKEN: ${{ secrets.SHOPIFY_GH_ACCESS_TOKEN }}
 
   # ============================================
   # COMPILE TEMPLATES (after production release publishes)
