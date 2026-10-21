@@ -7,10 +7,11 @@ description: >
   results, and cart surfaces. Use when adding, reviewing, or testing
   data-testid attributes on the product title, variant option values, add to
   cart button, product results and product card links, collection filter
-  checkboxes and labels, cart page, cart drawer,
+  checkboxes and labels, search page input and submit button, cart page,
+  cart drawer,
   cart trigger, cart lines, cart line quantity and remove controls, cart
   status, or checkout link, or when writing Playwright tests for product pages,
-  collection results and filters, add to cart, the cart, and the checkout handoff.
+  collection results and filters, search, add to cart, the cart, and the checkout handoff.
   Framework agnostic.
 ---
 
@@ -18,9 +19,9 @@ description: >
 
 This is a repository skill for agents who maintain the portable storefront suite in `packages/storefront-e2e/` and the reference storefronts in `templates/react-router/`, `examples/nextjs/`, and `examples/nuxt/`. The canonical contract is `packages/storefront-e2e/docs/storefront-contract.md`. When this skill and the contract differ, the contract is correct. Also read `skills/playwright-tests/SKILL.md` for the Playwright rules of this repository.
 
-Portable storefront tests run against any storefront URL, so they cannot depend on your markup or class names. The product page exposes three standard `data-testid` attributes, collection and search results expose two, collection and search filters expose two, and the cart exposes ten more, so there are 17 in total. Tests find these elements with Playwright `getByTestId`.
+Portable storefront tests run against any storefront URL, so they cannot depend on your markup or class names. The product page exposes three standard `data-testid` attributes, collection and search results expose two, collection and search filters expose two, the search page form exposes two, and the cart exposes ten more, so there are 19 in total. Tests find these elements with Playwright `getByTestId`.
 
-Only these 17 IDs are standard. Portable tests still find other storefront UI (the search input and submit button, an optional Apply filters button) by role, label, and text. Your storefront can have other test IDs for its own tests. Portable tests do not read them.
+Only these 19 IDs are standard. Portable tests still find other storefront UI (an optional Apply filters button) by role, label, and text. Your storefront can have other test IDs for its own tests. Portable tests do not read them.
 
 ## The product contract
 
@@ -54,7 +55,7 @@ Rules:
 Rules:
 
 - Put `product-results` on the main results only. Do not put it on recommendations or predictive search results. Product cards outside `product-results` do not count.
-- On the search page, after a query, render `product-results` for matching results and for empty results. Put it on the existing empty-state element when there are no results; only one of the two renders at a time. Before a query, the page does not need it.
+- On the search page, after a query, render `product-results` for matching results and for empty results. Put it on the existing empty-state element when there are no results; only one of the two renders at a time. Before a query, the page does not need it. An empty `product-results` before the query is fine, but it must not contain visible `product-card` links. Keep featured, popular, and recent product lists outside `product-results`; their cards can still use `product-card`. Tests reject visible marked cards inside `product-results` before the query.
 - Tests find the searched product by its handle in the card `href`, then check that the accessible name contains its title. A card for a similar title, such as `T-Shirt` for `Shirt`, does not match.
 - Put `product-card` on the primary `<a href>` product link, not on the card wrapper, such as an `<article>` or list item. If a card has an image link and a title link to the same product, mark only one.
 - Keep the link visible with its native link role (no `aria-hidden`, `hidden`, or `role="button"`), and keep the product title in its accessible name. Tests do not match other text, so any language works. Tests read only visible cards, so hidden responsive copies do not count.
@@ -75,6 +76,19 @@ Rules:
 - Keep the count in the label text as a whole number in parentheses, such as `Red (4)`. Tests read the first number in parentheses from the label text for now. They do not read counts from `title`, `aria-label`, or text such as `4 products`, so a label without a parenthesized number is not chosen. A value name that contains a number in parentheses, such as `Pack (2)`, can give the wrong count. Do not add custom attributes for counts.
 - Tests read only visible labels, so hidden copies, such as a closed drawer, do not count. Tests check up to the first 20 visible marked labels before they choose one, and any invalid one fails. They cannot detect a value with neither ID and do not read it. They click the label and read the native `checked` state. Do not add test-only attributes for filter names, values, or state.
 - Filters can apply on change. There is no test ID for an Apply button. If your filters need one, give it an accessible name that contains Apply filters or Show results.
+
+## The search contract
+
+| Test ID | Put it on | Count on the search page | Tests read |
+| --- | --- | --- | --- |
+| `search-input` | The query input of the search page form, a native `<input type="search">` | Exactly one on the whole page | Visible, editable, the searchbox role, and the typed query |
+| `search-submit` | Optional. The submit button of the same form, a native `<button>` | None, or exactly one on the whole page | Visible, the button role, a non-empty accessible name in any language, and the click |
+
+Rules:
+
+- Put `search-input` only on the search page input, not on a header or predictive search input. Keep it visible, enabled, and editable, and keep its searchbox role.
+- `search-submit` is optional. Without it, tests press Enter in the input. With it, tests click it, so it must be visible, in the same form as the input, and have an accessible name in any language. If your form has no search button, tests cover only Enter.
+- The IDs only find the controls. A search test passes only when the searched product's card link shows in `product-results`.
 
 ## The cart contract
 
@@ -137,6 +151,13 @@ Add the IDs to the elements the page already renders:
   <input data-testid="collection-filter-value" type="checkbox" name="filter.v.option.color" value="Red" />
   Red (4)
 </label>
+
+<!-- Search page form. The button is optional; without it, tests press Enter. -->
+<form action="/search" method="get" role="search">
+  <label for="search-q">Search</label>
+  <input data-testid="search-input" id="search-q" type="search" name="q" />
+  <button data-testid="search-submit" type="submit">Search</button>
+</form>
 
 <!-- Header. -->
 <button data-testid="cart-trigger" type="button" aria-label="Cart, 1 item" aria-controls="cart-drawer" aria-haspopup="dialog">…</button>
@@ -231,6 +252,7 @@ test("shows a product in the collection results", async ({ page }) => {
 });
 ```
 
+- Find the search input with `getByTestId("search-input")`. Click `search-submit` when the page has one; otherwise press Enter in the input.
 - Find filter labels with `getByTestId("collection-filter-label").filter({ visible: true })`, then the checkbox inside the label. Click the label and expect the checkbox to be checked.
 - Scope `product-card` to `product-results`, because recommendations can render product cards on the same page. Count results by unique product `href`, not by card elements.
 
@@ -248,9 +270,11 @@ test("shows a product in the collection results", async ({ page }) => {
 - [ ] The selected option has `aria-current="true"` (link) or `aria-pressed="true"` (button)
 - [ ] Option values for combinations that do not exist are buttons with native `disabled`
 - [ ] Exactly one `<button>` on the page has `data-testid="product-add-to-cart"`, with native `disabled` or `aria-disabled="true"` when the selection cannot be added
-- [ ] On each collection page that shows results, and on each search page after a query (with or without results), exactly one existing element has `data-testid="product-results"`, and recommendations and predictive search do not
+- [ ] On each collection page that shows results, and on each search page after a query (with or without results), exactly one existing element has `data-testid="product-results"`, and recommendations, featured products, and predictive search do not. Before a query, the search page shows no visible `product-card` inside `product-results`
 - [ ] The primary product link of each result is a visible native `<a href>` to the product page with `data-testid="product-card"`, and its accessible name contains the product title
 - [ ] Each list or boolean filter value is a native `<input type="checkbox">` with `data-testid="collection-filter-value"`, inside a visible native `<label>` with `data-testid="collection-filter-label"` whose text has the count as a whole number in parentheses, such as `Red (4)`, in every copy of the filters
+- [ ] Exactly one visible, editable `<input type="search">` on the search page has `data-testid="search-input"`, and header or predictive search inputs do not
+- [ ] If the search form has a submit button, it is the only element with `data-testid="search-submit"`, a visible native `<button>` in the same form, with an accessible name
 - [ ] Exactly one element on `/cart` has `data-testid="cart-page"`, and the drawer is not inside it
 - [ ] Exactly one native `<dialog>` has `data-testid="cart-drawer"`
 - [ ] Each populated cart view has one visible native `<a href>` checkout link with a non-empty accessible name and `data-testid="cart-checkout"`, and the cart page has exactly one
